@@ -20,4 +20,16 @@ public class AtmaAutomationConfiguration
     ///     Gets or sets a value indicating whether to travel by flying when possible.
     /// </summary>
     public bool UseFlight { get; set; } = true;
+
+    /// <summary>
+    ///     Gets or sets a value indicating whether clicking an enemy, FATE or leve
+    ///     in the book also travels to it after the teleport.
+    /// </summary>
+    public bool TravelOnBookClick { get; set; } = false;
+
+    /// <summary>
+    ///     Gets or sets a value indicating whether clicking a dungeon in the book
+    ///     starts an unsynced AutoDuty run instead of opening the duty finder.
+    /// </summary>
+    public bool UseAutoDutyForDungeons { get; set; } = true;
 }

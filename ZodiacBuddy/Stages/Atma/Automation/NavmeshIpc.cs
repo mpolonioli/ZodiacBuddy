@@ -139,6 +139,29 @@ internal sealed class NavmeshIpc
     public Vector3? PointOnFloor(Vector3 position, float halfExtentXZ)
         => this.Invoke<Vector3?>(() => this.queryPointOnFloor?.Invoke(position, false, halfExtentXZ), null);
 
+    /// <summary>
+    ///     Find a navigable point near the given position, whose Y coordinate may
+    ///     be unknown, by dropping to the floor with increasing search radii.
+    /// </summary>
+    /// <param name="approximate">Approximate position in world coordinates.</param>
+    /// <returns>The point on the floor, or null if none was found.</returns>
+    public Vector3? FindNavigablePoint(Vector3 approximate)
+    {
+        foreach (var y in new[] { 1024f, 0f })
+        {
+            foreach (var halfExtent in new[] { 5f, 10f, 20f, 50f })
+            {
+                var floor = this.PointOnFloor(approximate with { Y = y }, halfExtent);
+                if (floor is not null)
+                {
+                    return floor;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private static void InvokeAction(Action? action)
     {
         try

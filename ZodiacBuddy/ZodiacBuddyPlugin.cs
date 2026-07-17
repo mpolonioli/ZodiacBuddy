@@ -21,9 +21,11 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
 {
     private const string Command = "/pzodiac";
 
+    private readonly AdvancedUnstuck advancedUnstuck;
     private readonly AtmaManager animusBuddy;
     private readonly AtmaAutomationManager atmaAutomationManager;
     private readonly AtmaAutomationWindow atmaAutomationWindow;
+    private readonly BookTravelManager bookTravelManager;
     private readonly BraveManager braveManager;
     private readonly ConfigWindow configWindow;
     private readonly NovusManager novusManager;
@@ -44,7 +46,9 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
         ECommonsMain.Init(pluginInterface, this);
         WrathIPCWrapper.Init(pluginInterface, WrathIPCWrapper.ErrorType.IPCNotReady | WrathIPCWrapper.ErrorType.Unexpected);
 
-        atmaAutomationManager = new AtmaAutomationManager();
+        advancedUnstuck = new AdvancedUnstuck();
+        bookTravelManager = new BookTravelManager(advancedUnstuck);
+        atmaAutomationManager = new AtmaAutomationManager(advancedUnstuck, bookTravelManager);
 
         windowSystem = new WindowSystem("ZodiacBuddy");
         windowSystem.AddWindow(configWindow = new ConfigWindow());
@@ -61,7 +65,7 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
             });
 
         Service.BonusLightManager = new BonusLightManager();
-        animusBuddy = new AtmaManager();
+        animusBuddy = new AtmaManager(atmaAutomationManager, bookTravelManager);
         novusManager = new NovusManager();
         braveManager = new BraveManager();
     }
@@ -77,6 +81,8 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
         animusBuddy.Dispose();
         atmaAutomationWindow.Dispose();
         atmaAutomationManager.Dispose();
+        bookTravelManager.Dispose();
+        advancedUnstuck.Dispose();
         novusManager.Dispose();
         braveManager.Dispose();
         Service.BonusLightManager.Dispose();

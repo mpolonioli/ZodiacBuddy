@@ -11,6 +11,7 @@ using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using ZodiacBuddy.Stages.Atma.Automation;
 using ZodiacBuddy.Stages.Atma.Data;
 using RelicNote = FFXIVClientStructs.FFXIV.Client.Game.UI.RelicNote;
 
@@ -21,11 +22,20 @@ namespace ZodiacBuddy.Stages.Atma;
 /// </summary>
 internal class AtmaManager : IDisposable
 {
+    private readonly AtmaAutomationManager automationManager;
+    private readonly BookTravelManager bookTravel;
+    private readonly AutoDutyIpc autoDuty;
+
     /// <summary>
     ///     Initializes a new instance of the <see cref="AtmaManager" /> class.
     /// </summary>
-    public AtmaManager()
+    /// <param name="automationManager">Enemies automation manager.</param>
+    /// <param name="bookTravel">Book travel manager.</param>
+    public AtmaManager(AtmaAutomationManager automationManager, BookTravelManager bookTravel)
     {
+        this.automationManager = automationManager;
+        this.bookTravel = bookTravel;
+        this.autoDuty = new AutoDutyIpc();
         Service.AddonLifecycle.RegisterListener(AddonEvent.PostReceiveEvent, "RelicNoteBook", ReceiveEventDetour);
     }
 
@@ -126,6 +136,23 @@ internal class AtmaManager : IDisposable
         ExecuteTeleport(aetheryteId);
     }
 
+    private unsafe void StartDungeon(BraveTarget target)
+    {
+        if (Service.Configuration.AtmaAutomation.UseAutoDutyForDungeons && AutoDutyIpc.IsInstalled)
+        {
+            var territoryId = target.Position.TerritoryType.RowId;
+            if (this.autoDuty.HasPath(territoryId) && this.autoDuty.RunUnsynced(territoryId))
+            {
+                Service.Plugin.PrintMessage($"Starting an unsynced AutoDuty run of {target.ZoneName}.");
+                return;
+            }
+
+            Service.PluginLog.Warning($"AutoDuty has no path for {target.ZoneName} ({territoryId}); opening the duty finder instead.");
+        }
+
+        AgentContentsFinder.Instance()->OpenRegularDuty(target.ContentsFinderConditionId);
+    }
+
     private unsafe void ReceiveEventDetour(AddonEvent type, AddonArgs args)
     {
         try
@@ -208,23 +235,32 @@ internal class AtmaManager : IDisposable
             ImGui.SetClipboardText(selectedTarget.Name);
         }
 
+        if (index == 1)
+        {
+            // Dungeons: run them unsynced through AutoDuty when available,
+            // otherwise open the duty finder.
+            this.StartDungeon(selectedTarget);
+            return;
+        }
+
         var aetheryteId = GetNearestAetheryte(selectedTarget.Position);
         if (aetheryteId == 0)
         {
-            if (index == 1)
-            {
-                // Dungeons
-                AgentContentsFinder.Instance()->OpenRegularDuty(selectedTarget.ContentsFinderConditionId);
-            }
-            else
-            {
-                Service.PluginLog.Warning($"Could not find an aetheryte for {zoneName}");
-            }
+            Service.PluginLog.Warning($"Could not find an aetheryte for {zoneName}");
         }
         else
         {
             Service.GameGui.OpenMapWithMapLink(selectedTarget.Position);
             Teleport(aetheryteId);
+
+            // Enemies, FATEs and leves: optionally continue to the target once
+            // the teleport lands.
+            if (Service.Configuration.AtmaAutomation.TravelOnBookClick
+                && !Service.Configuration.DisableTeleport
+                && !this.automationManager.IsRunning)
+            {
+                this.bookTravel.Start(selectedTarget);
+            }
         }
 
         return;

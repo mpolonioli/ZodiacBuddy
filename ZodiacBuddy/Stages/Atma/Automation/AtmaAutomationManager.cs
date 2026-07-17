@@ -33,8 +33,11 @@ internal sealed class AtmaAutomationManager : IDisposable
 
     private readonly NavmeshIpc navmesh;
     private readonly WrathComboIpc wrath;
+    private readonly AdvancedUnstuck unstuck;
+    private readonly BookTravelManager bookTravel;
     private readonly Dictionary<ulong, DateTime> blacklist = [];
     private readonly Random random = new();
+    private System.Action? unstuckRecovery;
 
     private uint startedBookId;
     private BraveBook currentBook;
@@ -69,10 +72,14 @@ internal sealed class AtmaAutomationManager : IDisposable
     /// <summary>
     ///     Initializes a new instance of the <see cref="AtmaAutomationManager" /> class.
     /// </summary>
-    public AtmaAutomationManager()
+    /// <param name="unstuck">Shared unstuck helper.</param>
+    /// <param name="bookTravel">Book travel manager, cancelled when this automation starts.</param>
+    public AtmaAutomationManager(AdvancedUnstuck unstuck, BookTravelManager bookTravel)
     {
         this.navmesh = new NavmeshIpc();
         this.wrath = new WrathComboIpc();
+        this.unstuck = unstuck;
+        this.bookTravel = bookTravel;
         this.wrath.LeaseCancelled += this.OnLeaseCancelled;
         Service.Framework.Update += this.OnUpdate;
     }
@@ -190,6 +197,8 @@ internal sealed class AtmaAutomationManager : IDisposable
             return;
         }
 
+        this.bookTravel.Cancel("The enemies automation started.");
+
         this.startedBookId = RelicNote.Instance()->RelicNoteId;
         this.currentBook = BraveBook.GetValue(this.startedBookId);
         this.LastError = string.Empty;
@@ -241,7 +250,14 @@ internal sealed class AtmaAutomationManager : IDisposable
         return relicNote == null ? 0u : relicNote->RelicNoteId;
     }
 
-    private static float MapToWorld(float mapCoord, float sizeFactor, short offset)
+    /// <summary>
+    ///     Convert a map coordinate to a world coordinate.
+    /// </summary>
+    /// <param name="mapCoord">Map coordinate.</param>
+    /// <param name="sizeFactor">Size factor of the map.</param>
+    /// <param name="offset">Map offset for the axis.</param>
+    /// <returns>The world coordinate.</returns>
+    internal static float MapToWorld(float mapCoord, float sizeFactor, short offset)
     {
         var c = sizeFactor / 100.0f;
         return ((((mapCoord - 1.0f) * c / 41.0f * 2048.0f) - 1024.0f) / c) - offset;
@@ -260,7 +276,12 @@ internal sealed class AtmaAutomationManager : IDisposable
         return range;
     }
 
-    private static unsafe bool TryUseGeneralAction(uint actionId)
+    /// <summary>
+    ///     Use a general action if it is currently available.
+    /// </summary>
+    /// <param name="actionId">General action ID.</param>
+    /// <returns>Whether the action was used.</returns>
+    internal static unsafe bool TryUseGeneralAction(uint actionId)
     {
         var actionManager = CSGame.ActionManager.Instance();
         return actionManager->GetActionStatus(CSGame.ActionType.GeneralAction, actionId) == 0
@@ -270,7 +291,12 @@ internal sealed class AtmaAutomationManager : IDisposable
     private static unsafe bool CanUseGeneralAction(uint actionId)
         => CSGame.ActionManager.Instance()->GetActionStatus(CSGame.ActionType.GeneralAction, actionId) == 0;
 
-    private static unsafe bool IsFlyingUnlocked(uint territoryId)
+    /// <summary>
+    ///     Check whether flying is unlocked in the given territory.
+    /// </summary>
+    /// <param name="territoryId">Territory ID.</param>
+    /// <returns>Whether flying is unlocked.</returns>
+    internal static unsafe bool IsFlyingUnlocked(uint territoryId)
     {
         var flagSet = Service.DataManager.GetExcelSheet<TerritoryType>().GetRow(territoryId).AetherCurrentCompFlgSet.RowId;
         if (flagSet == 0)
@@ -294,6 +320,21 @@ internal sealed class AtmaAutomationManager : IDisposable
             if (!this.CheckGlobalGuards())
             {
                 return;
+            }
+
+            // While an unstuck maneuver overrides movement, pause the state machine;
+            // once it finishes, resume path following where we left off.
+            this.unstuck.Update();
+            if (this.unstuck.IsRunning)
+            {
+                return;
+            }
+
+            if (this.unstuckRecovery is not null)
+            {
+                var recovery = this.unstuckRecovery;
+                this.unstuckRecovery = null;
+                recovery();
             }
 
             // A kill can be counted while traveling, scanning or clearing aggro, not
@@ -541,7 +582,7 @@ internal sealed class AtmaAutomationManager : IDisposable
 
         if (!this.stateEntered)
         {
-            var floor = this.FindPointOnFloor(this.destination);
+            var floor = this.navmesh.FindNavigablePoint(this.destination);
             if (floor is null)
             {
                 this.NextAetheryteOrFail($"No navigable point found near {this.currentEnemy.Name}'s position.");
@@ -1008,6 +1049,8 @@ internal sealed class AtmaAutomationManager : IDisposable
     private void Cleanup()
     {
         this.navmesh.Stop();
+        this.unstuck.Stop();
+        this.unstuckRecovery = null;
         this.wrath.EndControl();
     }
 
@@ -1058,23 +1101,6 @@ internal sealed class AtmaAutomationManager : IDisposable
         return mob;
     }
 
-    private Vector3? FindPointOnFloor(Vector3 approximate)
-    {
-        foreach (var y in new[] { 1024f, 0f })
-        {
-            foreach (var halfExtent in new[] { 5f, 10f, 20f, 50f })
-            {
-                var floor = this.navmesh.PointOnFloor(approximate with { Y = y }, halfExtent);
-                if (floor is not null)
-                {
-                    return floor;
-                }
-            }
-        }
-
-        return null;
-    }
-
     private void ResetStuckDetection(Vector3 position)
     {
         this.lastPosition = position;
@@ -1103,10 +1129,28 @@ internal sealed class AtmaAutomationManager : IDisposable
                 return true;
             }
 
-            // A hop first gets us over small obstacles the path clips through.
-            TryUseGeneralAction(JumpActionId);
             this.ResetStuckDetection(position);
-            recover();
+            if (this.repathAttempts == 1)
+            {
+                // A hop first gets us over small obstacles the path clips through.
+                TryUseGeneralAction(JumpActionId);
+                recover();
+            }
+            else
+            {
+                // Physically dislodge the character with a movement override
+                // before repathing.
+                this.navmesh.Stop();
+                if (this.unstuck.Start())
+                {
+                    this.unstuckRecovery = recover;
+                }
+                else
+                {
+                    TryUseGeneralAction(JumpActionId);
+                    recover();
+                }
+            }
         }
 
         return false;

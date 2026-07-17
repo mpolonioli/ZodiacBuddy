@@ -33,6 +33,11 @@ internal struct BraveTarget
     public uint ContentsFinderConditionId { get; init; }
 
     /// <summary>
+    ///     Gets the Fate row ID. Only set for FATE targets.
+    /// </summary>
+    public uint FateId { get; init; }
+
+    /// <summary>
     ///     Gets the location name.
     /// </summary>
     public string LocationName { get; init; }

@@ -241,6 +241,31 @@ internal class ConfigWindow : Window
             Service.Configuration.Save();
         }
 
+        var travelOnClick = Service.Configuration.AtmaAutomation.TravelOnBookClick;
+        if (ImGui.Checkbox("Travel to enemies, FATEs and leves clicked in the book", ref travelOnClick))
+        {
+            Service.Configuration.AtmaAutomation.TravelOnBookClick = travelOnClick;
+            Service.Configuration.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("After the teleport lands, mounts up and navigates to the target with vnavmesh.\n" +
+                             "FATE targets are only approached while the FATE is active.");
+        }
+
+        var useAutoDuty = Service.Configuration.AtmaAutomation.UseAutoDutyForDungeons;
+        if (ImGui.Checkbox("Run dungeons clicked in the book unsynced with AutoDuty", ref useAutoDuty))
+        {
+            Service.Configuration.AtmaAutomation.UseAutoDutyForDungeons = useAutoDuty;
+            Service.Configuration.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("Requires the AutoDuty plugin; opens the duty finder when it is not available.");
+        }
+
         if (ImGui.Button("Open automation window"))
         {
             Service.Plugin.OpenAutomationWindow();

@@ -20,6 +20,9 @@ public class Service
     [PluginService] public static IToastGui Toasts { get; set; }
     [PluginService] public static IPluginLog PluginLog { get; set; }
     [PluginService] public static IAddonLifecycle AddonLifecycle { get; set; }
+    [PluginService] public static IFateTable Fates { get; set; }
+    [PluginService] public static IGameConfig GameConfig { get; set; }
+    [PluginService] public static IGameInteropProvider GameInterop { get; set; }
     [PluginService] public static IObjectTable ObjectTable { get; set; }
     [PluginService] public static ITargetManager TargetManager { get; set; }
     [PluginService] public static IPlayerState PlayerState { get; set; }

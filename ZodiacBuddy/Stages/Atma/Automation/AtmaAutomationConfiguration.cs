@@ -15,4 +15,9 @@ public class AtmaAutomationConfiguration
     ///     Gets or sets a value indicating whether to use the mount roulette for longer travels.
     /// </summary>
     public bool UseMount { get; set; } = true;
+
+    /// <summary>
+    ///     Gets or sets a value indicating whether to travel by flying when possible.
+    /// </summary>
+    public bool UseFlight { get; set; } = true;
 }

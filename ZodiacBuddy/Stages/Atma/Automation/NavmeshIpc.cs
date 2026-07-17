@@ -1,7 +1,9 @@
 using ECommons.EzIpcManager;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Threading.Tasks;
 
 namespace ZodiacBuddy.Stages.Atma.Automation;
 
@@ -16,6 +18,12 @@ internal sealed class NavmeshIpc
 
     [EzIPC("Nav.BuildProgress")]
     private readonly Func<float>? navBuildProgress;
+
+    [EzIPC("Nav.Pathfind")]
+    private readonly Func<Vector3, Vector3, bool, Task<List<Vector3>>>? navPathfind;
+
+    [EzIPC("Path.MoveTo")]
+    private readonly Action<List<Vector3>, bool>? pathMoveTo;
 
     [EzIPC("SimpleMove.PathfindAndMoveTo")]
     private readonly Func<Vector3, bool, bool>? pathfindAndMoveTo;
@@ -74,12 +82,31 @@ internal sealed class NavmeshIpc
     public bool IsPathRunning => this.Invoke(this.pathIsRunning, false);
 
     /// <summary>
+    ///     Compute a path to the destination without following it.
+    /// </summary>
+    /// <param name="from">Start position in world coordinates.</param>
+    /// <param name="to">Destination in world coordinates.</param>
+    /// <param name="fly">Whether to use the flying volume instead of the ground mesh.</param>
+    /// <returns>The pathfinding task, or null when the request failed.</returns>
+    public Task<List<Vector3>>? Pathfind(Vector3 from, Vector3 to, bool fly)
+        => this.Invoke<Task<List<Vector3>>?>(() => this.navPathfind?.Invoke(from, to, fly), null);
+
+    /// <summary>
+    ///     Follow an already computed path.
+    /// </summary>
+    /// <param name="waypoints">Waypoints of the path.</param>
+    /// <param name="fly">Whether the path is a flying path.</param>
+    public void MoveTo(List<Vector3> waypoints, bool fly)
+        => InvokeAction(() => this.pathMoveTo?.Invoke(waypoints, fly));
+
+    /// <summary>
     ///     Pathfind to the destination and follow the path.
     /// </summary>
     /// <param name="destination">Destination in world coordinates.</param>
+    /// <param name="fly">Whether to fly there.</param>
     /// <returns>Whether the request was accepted.</returns>
-    public bool PathfindAndMoveTo(Vector3 destination)
-        => this.Invoke(() => this.pathfindAndMoveTo?.Invoke(destination, false) ?? false, false);
+    public bool PathfindAndMoveTo(Vector3 destination, bool fly = false)
+        => this.Invoke(() => this.pathfindAndMoveTo?.Invoke(destination, fly) ?? false, false);
 
     /// <summary>
     ///     Pathfind toward the destination and stop within the given range of it.

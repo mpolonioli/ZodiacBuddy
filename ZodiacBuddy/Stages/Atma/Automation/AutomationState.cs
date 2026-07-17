@@ -26,6 +26,11 @@ internal enum AutomationState
     WaitingForNavmesh,
 
     /// <summary>
+    ///     Checking whether the enemy's area can be reached from here, and how.
+    /// </summary>
+    ProbingRoute,
+
+    /// <summary>
     ///     Traveling to the approximate location of the current enemy.
     /// </summary>
     NavigatingToArea,

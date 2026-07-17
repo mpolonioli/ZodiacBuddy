@@ -234,6 +234,13 @@ internal class ConfigWindow : Window
             Service.Configuration.Save();
         }
 
+        var useFlight = Service.Configuration.AtmaAutomation.UseFlight;
+        if (ImGui.Checkbox("Travel by flying when possible", ref useFlight))
+        {
+            Service.Configuration.AtmaAutomation.UseFlight = useFlight;
+            Service.Configuration.Save();
+        }
+
         if (ImGui.Button("Open automation window"))
         {
             Service.Plugin.OpenAutomationWindow();

@@ -9,6 +9,7 @@ using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using ZodiacBuddy.Stages.Atma.Data;
 using RelicNote = FFXIVClientStructs.FFXIV.Client.Game.UI.RelicNote;
@@ -40,9 +41,16 @@ internal class AtmaManager : IDisposable
     /// <param name="mapLink">Map link to search around.</param>
     /// <returns>The aetheryte row ID, or 0 if none was found.</returns>
     internal static uint GetNearestAetheryte(MapLinkPayload mapLink)
+        => GetAetherytesByDistance(mapLink).FirstOrDefault();
+
+    /// <summary>
+    ///     Find all aetherytes of the map link's territory, ordered by distance to it.
+    /// </summary>
+    /// <param name="mapLink">Map link to search around.</param>
+    /// <returns>The aetheryte row IDs, closest first.</returns>
+    internal static List<uint> GetAetherytesByDistance(MapLinkPayload mapLink)
     {
-        var closestAetheryteId = 0u;
-        var closestDistance = double.MaxValue;
+        var candidates = new List<(uint Id, double Distance)>();
 
         static float ConvertRawPositionToMapCoordinate(int pos, float scale)
         {
@@ -78,7 +86,7 @@ internal class AtmaManager : IDisposable
             if (mapMarker.RowId is 0)
             {
                 Service.PluginLog.Debug($"Could not find aetheryte: {name}");
-                return 0;
+                continue;
             }
 
             var aetherX = ConvertRawPositionToMapCoordinate(mapMarker.X, scale);
@@ -87,14 +95,10 @@ internal class AtmaManager : IDisposable
             // var aetheryteName = aetheryte.PlaceName.Value!;
             // Service.PluginLog.Debug($"Aetheryte found: {aetherName} ({aetherX} ,{aetherY})");
             var distance = Math.Pow(aetherX - mapLink.XCoord, 2) + Math.Pow(aetherY - mapLink.YCoord, 2);
-            if (distance < closestDistance)
-            {
-                closestDistance = distance;
-                closestAetheryteId = aetheryte.RowId;
-            }
+            candidates.Add((aetheryte.RowId, distance));
         }
 
-        return closestAetheryteId;
+        return candidates.OrderBy(c => c.Distance).Select(c => c.Id).ToList();
     }
 
     /// <summary>

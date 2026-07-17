@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Threading.Tasks;
 using ZodiacBuddy.Stages.Atma.Data;
 using CSGame = FFXIVClientStructs.FFXIV.Client.Game;
 using RelicNote = FFXIVClientStructs.FFXIV.Client.Game.UI.RelicNote;
@@ -41,9 +42,16 @@ internal sealed class AtmaAutomationManager : IDisposable
     private Vector3 destination;
     private ulong currentMobId;
 
+    private List<uint> aetheryteCandidates = [];
+    private int aetheryteIndex;
+    private Task<List<Vector3>>? probeTask;
+    private bool probingFly;
+    private List<Vector3>? plannedPath;
+    private bool plannedFly;
+    private bool flyDisabledForLeg;
+
     private DateTime stateEnteredAt;
     private bool stateEntered;
-    private bool pathStarted;
     private AutomationState stateAfterAggro;
 
     private Vector3 lastPosition;
@@ -51,6 +59,8 @@ internal sealed class AtmaAutomationManager : IDisposable
     private DateTime lastMovedAt;
     private DateTime lastTeleportAt;
     private int teleportAttempts;
+    private uint teleportStartTerritory;
+    private bool sawZoning;
     private int repathAttempts;
     private bool reapproachedOnce;
     private int lastProgress;
@@ -260,6 +270,18 @@ internal sealed class AtmaAutomationManager : IDisposable
     private static unsafe bool CanUseGeneralAction(uint actionId)
         => CSGame.ActionManager.Instance()->GetActionStatus(CSGame.ActionType.GeneralAction, actionId) == 0;
 
+    private static unsafe bool IsFlyingUnlocked(uint territoryId)
+    {
+        var flagSet = Service.DataManager.GetExcelSheet<TerritoryType>().GetRow(territoryId).AetherCurrentCompFlgSet.RowId;
+        if (flagSet == 0)
+        {
+            return false;
+        }
+
+        var playerState = CSGame.UI.PlayerState.Instance();
+        return playerState != null && playerState->IsAetherCurrentZoneComplete(flagSet);
+    }
+
     private void OnUpdate(IFramework framework)
     {
         try
@@ -301,6 +323,9 @@ internal sealed class AtmaAutomationManager : IDisposable
                     break;
                 case AutomationState.WaitingForNavmesh:
                     this.HandleWaitingForNavmesh();
+                    break;
+                case AutomationState.ProbingRoute:
+                    this.HandleProbingRoute();
                     break;
                 case AutomationState.NavigatingToArea:
                     this.HandleNavigatingToArea();
@@ -405,9 +430,26 @@ internal sealed class AtmaAutomationManager : IDisposable
         Log($"Next enemy: {this.currentEnemy.Name} in {this.currentEnemy.ZoneName} " +
                   $"({GetMonsterProgress(this.CurrentSlot)}/{this.currentEnemy.RequiredKills}).");
 
-        this.TransitionTo(Service.ClientState.TerritoryType == mapLink.TerritoryType.RowId
-            ? AutomationState.WaitingForNavmesh
-            : AutomationState.Teleporting);
+        this.flyDisabledForLeg = false;
+        this.aetheryteCandidates = AtmaManager.GetAetherytesByDistance(mapLink);
+
+        if (Service.ClientState.TerritoryType == mapLink.TerritoryType.RowId)
+        {
+            // Already here; if the destination turns out unreachable from this spot,
+            // the aetheryte fallback starts from the closest one.
+            this.aetheryteIndex = -1;
+            this.TransitionTo(AutomationState.WaitingForNavmesh);
+            return;
+        }
+
+        if (this.aetheryteCandidates.Count == 0)
+        {
+            this.Fail($"No aetheryte found in {this.currentEnemy.ZoneName}.");
+            return;
+        }
+
+        this.aetheryteIndex = 0;
+        this.TransitionTo(AutomationState.Teleporting);
     }
 
     private void HandleTeleporting()
@@ -420,12 +462,23 @@ internal sealed class AtmaAutomationManager : IDisposable
             this.navmesh.Stop();
             this.teleportAttempts = 0;
             this.lastTeleportAt = DateTime.MinValue;
+            this.teleportStartTerritory = Service.ClientState.TerritoryType;
+            this.sawZoning = false;
             this.stateEntered = true;
         }
 
+        // While the cast bar is up or we are zoning, just wait. Observing the zoning
+        // is also what tells intra-zone teleports (to another aetheryte of the same
+        // territory) apart from not having teleported at all.
+        if (Service.Condition[ConditionFlag.BetweenAreas]
+            || Service.Condition[ConditionFlag.BetweenAreas51])
+        {
+            this.sawZoning = true;
+            return;
+        }
+
         if (Service.ClientState.TerritoryType == this.currentEnemy.Position.TerritoryType.RowId
-            && !Service.Condition[ConditionFlag.BetweenAreas]
-            && !Service.Condition[ConditionFlag.BetweenAreas51])
+            && (this.sawZoning || this.teleportStartTerritory != this.currentEnemy.Position.TerritoryType.RowId))
         {
             this.TransitionTo(AutomationState.WaitingForNavmesh);
             return;
@@ -439,10 +492,7 @@ internal sealed class AtmaAutomationManager : IDisposable
             return;
         }
 
-        // While the cast bar is up or we are zoning, just wait.
-        if (Service.Condition[ConditionFlag.Casting]
-            || Service.Condition[ConditionFlag.BetweenAreas]
-            || Service.Condition[ConditionFlag.BetweenAreas51])
+        if (Service.Condition[ConditionFlag.Casting])
         {
             return;
         }
@@ -457,7 +507,7 @@ internal sealed class AtmaAutomationManager : IDisposable
                 return;
             }
 
-            var aetheryteId = AtmaManager.GetNearestAetheryte(this.currentEnemy.Position);
+            var aetheryteId = this.aetheryteCandidates.ElementAtOrDefault(Math.Max(this.aetheryteIndex, 0));
             if (aetheryteId == 0 || !AtmaManager.ExecuteTeleport(aetheryteId))
             {
                 this.Fail($"Could not teleport to {this.currentEnemy.ZoneName}.");
@@ -474,7 +524,7 @@ internal sealed class AtmaAutomationManager : IDisposable
 
         if (this.navmesh.IsReady)
         {
-            this.TransitionTo(AutomationState.NavigatingToArea);
+            this.TransitionTo(AutomationState.ProbingRoute);
             return;
         }
 
@@ -484,9 +534,9 @@ internal sealed class AtmaAutomationManager : IDisposable
         }
     }
 
-    private void HandleNavigatingToArea()
+    private void HandleProbingRoute()
     {
-        this.StatusDetail = $"Traveling to {this.currentEnemy.Name}'s area...";
+        this.StatusDetail = $"Checking the route to {this.currentEnemy.Name}'s area...";
         var player = Service.ObjectTable.LocalPlayer!;
 
         if (!this.stateEntered)
@@ -494,39 +544,102 @@ internal sealed class AtmaAutomationManager : IDisposable
             var floor = this.FindPointOnFloor(this.destination);
             if (floor is null)
             {
-                this.Fail($"No navigable point found near {this.currentEnemy.Name}'s position.");
+                this.NextAetheryteOrFail($"No navigable point found near {this.currentEnemy.Name}'s position.");
                 return;
             }
 
             this.destination = floor.Value;
-            this.repathAttempts = 0;
+            this.probeTask = null;
             this.stateEntered = true;
         }
 
-        if (!this.pathStarted)
+        // Deal with attackers before planning any travel.
+        if (Service.Condition[ConditionFlag.InCombat])
         {
-            // Mount up for longer travels; the mount cast requires standing still,
-            // so it has to finish before the path starts. Give up after a few
-            // seconds (or when mounting is impossible here) and walk instead.
-            if (this.ShouldMount(player.Position) && this.StateAge < TimeSpan.FromSeconds(6))
+            this.stateAfterAggro = AutomationState.ProbingRoute;
+            this.TransitionTo(AutomationState.HandlingAggro);
+            return;
+        }
+
+        if (this.probeTask is null)
+        {
+            var wantFly = this.WantFly();
+
+            // Flying requires a mount; mount up before probing so the probe mode
+            // matches how we will actually travel. Ground travel also mounts for
+            // longer legs, purely for speed.
+            if ((wantFly || this.ShouldMount(player.Position)) && this.StateAge < TimeSpan.FromSeconds(6))
             {
                 if (EzThrottler.Throttle("ZodiacBuddy.AtmaAuto.Mount", 1000))
                 {
                     TryUseGeneralAction(MountRouletteActionId);
                 }
 
-                return;
+                if (!Service.Condition[ConditionFlag.Mounted])
+                {
+                    return;
+                }
             }
 
+            this.probingFly = wantFly && Service.Condition[ConditionFlag.Mounted];
+            this.probeTask = this.navmesh.Pathfind(player.Position, this.destination, this.probingFly);
+            if (this.probeTask is null)
+            {
+                this.OnProbeFailed();
+            }
+
+            return;
+        }
+
+        if (!this.probeTask.IsCompleted)
+        {
+            if (this.StateAge > TimeSpan.FromSeconds(60))
+            {
+                this.probeTask = null;
+                this.OnProbeFailed();
+            }
+
+            return;
+        }
+
+        var path = this.probeTask.IsCompletedSuccessfully ? this.probeTask.Result : null;
+        this.probeTask = null;
+
+        // vnavmesh returns a partial path to the closest reachable point when the
+        // destination is on a disconnected part of the mesh (e.g. across water).
+        if (path is null || path.Count == 0 || Vector3.Distance(path[^1], this.destination) > 10f)
+        {
+            this.OnProbeFailed();
+            return;
+        }
+
+        this.plannedPath = path;
+        this.plannedFly = this.probingFly;
+        this.TransitionTo(AutomationState.NavigatingToArea);
+    }
+
+    private void HandleNavigatingToArea()
+    {
+        this.StatusDetail = $"Traveling to {this.currentEnemy.Name}'s area...";
+        var player = Service.ObjectTable.LocalPlayer!;
+
+        if (!this.stateEntered)
+        {
             this.navmesh.SetTolerance(0.5f);
-            if (!this.navmesh.PathfindAndMoveTo(this.destination))
+            if (this.plannedPath is not null)
+            {
+                this.navmesh.MoveTo(this.plannedPath, this.plannedFly);
+                this.plannedPath = null;
+            }
+            else if (!this.navmesh.PathfindAndMoveTo(this.destination, this.plannedFly))
             {
                 this.Fail("vnavmesh could not start pathfinding.");
                 return;
             }
 
+            this.repathAttempts = 0;
             this.ResetStuckDetection(player.Position);
-            this.pathStarted = true;
+            this.stateEntered = true;
             return;
         }
 
@@ -534,13 +647,15 @@ internal sealed class AtmaAutomationManager : IDisposable
         if (Service.Condition[ConditionFlag.InCombat])
         {
             this.navmesh.Stop();
-            this.stateAfterAggro = AutomationState.NavigatingToArea;
+            this.stateAfterAggro = AutomationState.ProbingRoute;
             this.TransitionTo(AutomationState.HandlingAggro);
             return;
         }
 
-        // If the enemy we want is already close by, cut travel short.
-        if (EzThrottler.Throttle("ZodiacBuddy.AtmaAuto.EarlyScan", 1000))
+        // If the enemy we want is already close by, cut travel short - but not
+        // while airborne, ground pathing can't start from up there.
+        if (!Service.Condition[ConditionFlag.InFlight]
+            && EzThrottler.Throttle("ZodiacBuddy.AtmaAuto.EarlyScan", 1000))
         {
             var mob = this.FindEnemy();
             if (mob is not null && Vector3.Distance(player.Position, mob.Position) <= EarlyTargetRange)
@@ -552,8 +667,19 @@ internal sealed class AtmaAutomationManager : IDisposable
             }
         }
 
-        if (Vector3.Distance(player.Position, this.destination) <= 3f && !this.navmesh.IsPathRunning)
+        if (Vector3.Distance(player.Position, this.destination) <= 5f && !this.navmesh.IsPathRunning)
         {
+            // Get back on the ground before scanning and fighting.
+            if (Service.Condition[ConditionFlag.InFlight] || Service.Condition[ConditionFlag.Mounted])
+            {
+                if (EzThrottler.Throttle("ZodiacBuddy.AtmaAuto.Dismount", 500))
+                {
+                    TryUseGeneralAction(DismountActionId);
+                }
+
+                return;
+            }
+
             this.TransitionTo(AutomationState.Scanning);
             return;
         }
@@ -561,10 +687,21 @@ internal sealed class AtmaAutomationManager : IDisposable
         if (this.CheckStuck(player.Position, () =>
             {
                 this.navmesh.Stop();
-                this.navmesh.PathfindAndMoveTo(this.destination);
+                this.navmesh.PathfindAndMoveTo(this.destination, this.plannedFly);
             }))
         {
-            this.Fail("Stuck while navigating.");
+            if (this.plannedFly)
+            {
+                // Flying did not work out (e.g. flight not actually available);
+                // re-plan this leg on the ground.
+                this.flyDisabledForLeg = true;
+                this.TransitionTo(AutomationState.ProbingRoute);
+            }
+            else
+            {
+                this.NextAetheryteOrFail("Stuck while navigating.");
+            }
+
             return;
         }
 
@@ -802,6 +939,7 @@ internal sealed class AtmaAutomationManager : IDisposable
         // the target when heading anywhere that isn't a fight to avoid unwanted pulls.
         if (state is AutomationState.SelectNextEnemy
             or AutomationState.Teleporting
+            or AutomationState.ProbingRoute
             or AutomationState.NavigatingToArea
             or AutomationState.Scanning)
         {
@@ -811,7 +949,6 @@ internal sealed class AtmaAutomationManager : IDisposable
         this.State = state;
         this.stateEnteredAt = DateTime.UtcNow;
         this.stateEntered = false;
-        this.pathStarted = false;
     }
 
     private bool ShouldMount(Vector3 from)
@@ -821,6 +958,42 @@ internal sealed class AtmaAutomationManager : IDisposable
                && !Service.Condition[ConditionFlag.InCombat]
                && Vector3.Distance(from, this.destination) > MountDistance
                && CanUseGeneralAction(MountRouletteActionId);
+    }
+
+    private bool WantFly()
+    {
+        var configuration = Service.Configuration.AtmaAutomation;
+        return configuration.UseMount
+               && configuration.UseFlight
+               && !this.flyDisabledForLeg
+               && IsFlyingUnlocked(Service.ClientState.TerritoryType)
+               && (Service.Condition[ConditionFlag.Mounted] || CanUseGeneralAction(MountRouletteActionId));
+    }
+
+    private void OnProbeFailed()
+    {
+        if (this.probingFly)
+        {
+            // The air route failed; try the ground mesh before changing aetheryte.
+            this.flyDisabledForLeg = true;
+            return;
+        }
+
+        this.NextAetheryteOrFail($"{this.currentEnemy.Name}'s area is not reachable from here.");
+    }
+
+    private void NextAetheryteOrFail(string reason)
+    {
+        this.aetheryteIndex++;
+        this.flyDisabledForLeg = false;
+        if (this.aetheryteIndex >= this.aetheryteCandidates.Count)
+        {
+            this.Fail($"{reason} No aetheryte in {this.currentEnemy.ZoneName} can reach it.");
+            return;
+        }
+
+        Log($"{reason} Trying the next aetheryte.");
+        this.TransitionTo(AutomationState.Teleporting);
     }
 
     private void Fail(string reason)

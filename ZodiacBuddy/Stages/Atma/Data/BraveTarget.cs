@@ -13,6 +13,11 @@ internal struct BraveTarget
     public string Name { get; init; }
 
     /// <summary>
+    ///     Gets the boss name. Only set for dungeon targets.
+    /// </summary>
+    public string BossName { get; init; }
+
+    /// <summary>
     ///     Gets the issuer name for leves.
     /// </summary>
     public string Issuer { get; init; }

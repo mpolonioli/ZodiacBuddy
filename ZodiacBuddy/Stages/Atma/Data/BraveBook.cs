@@ -141,7 +141,9 @@ internal struct BraveBook
 
                     var locationName = mntc.PlaceNameLocation[0].Value.Name.ToString();
 
-                    var name = Service.SeStringEvaluator.EvaluateObjStr(ObjectKind.BattleNpc, mntc.BNpcName.RowId);
+                    // The MonsterNoteTarget resolves to the dungeon's final boss; the
+                    // dungeon's own name comes from its content finder condition.
+                    var bossName = Service.SeStringEvaluator.EvaluateObjStr(ObjectKind.BattleNpc, mntc.BNpcName.RowId);
 
                     var position = GetMonsterPosition(mntc.RowId);
 
@@ -153,10 +155,17 @@ internal struct BraveBook
                     // is not always the map-link territory (171) used above.
                     var dutyTerritoryId = cfc.TerritoryType.RowId;
 
-                    // Service.PluginLog.Debug($"Loaded dungeon {mntcID}: {name}");
+                    var dungeonName = Service.SeStringEvaluator.Evaluate(cfc.Name).ToString();
+                    if (string.IsNullOrEmpty(dungeonName))
+                    {
+                        dungeonName = zoneName;
+                    }
+
+                    // Service.PluginLog.Debug($"Loaded dungeon {mntcID}: {dungeonName}");
                     braveBook.Dungeons[i] = new BraveTarget
                     {
-                        Name = name,
+                        Name = dungeonName,
+                        BossName = bossName,
                         ZoneName = zoneName,
                         ZoneId = zoneId,
                         LocationName = locationName,

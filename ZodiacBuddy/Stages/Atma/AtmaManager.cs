@@ -143,7 +143,7 @@ internal class AtmaManager : IDisposable
             var territoryId = target.DutyTerritoryId != 0 ? target.DutyTerritoryId : target.Position.TerritoryType.RowId;
             if (this.autoDuty.HasPath(territoryId) && this.autoDuty.RunUnsynced(territoryId))
             {
-                Service.Plugin.PrintMessage($"Starting an unsynced AutoDuty run of {target.ZoneName}.");
+                Service.Plugin.PrintMessage($"Starting an unsynced AutoDuty run of {target.Name}.");
                 return;
             }
 

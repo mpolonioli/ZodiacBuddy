@@ -217,7 +217,7 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
 
         ImGui.TableSetupColumn("##Current", ImGuiTableColumnFlags.WidthFixed, 20f);
         ImGui.TableSetupColumn("Dungeon");
-        ImGui.TableSetupColumn("Zone");
+        ImGui.TableSetupColumn("Boss");
         ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 90f);
         ImGui.TableHeadersRow();
 
@@ -236,7 +236,7 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
             ImGui.TableNextColumn();
             ImGui.Text(dungeon.Name);
             ImGui.TableNextColumn();
-            ImGui.Text(dungeon.ZoneName);
+            ImGui.Text(dungeon.BossName);
             ImGui.TableNextColumn();
             ImGui.TextColored(
                 complete ? ImGuiColors.HealerGreen : ImGuiColors.DalamudWhite,

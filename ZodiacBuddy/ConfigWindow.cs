@@ -218,6 +218,41 @@ internal class ConfigWindow : Window
             Service.Configuration.Save();
         }
 
+        ImGui.Separator();
+
+        var autoOpenWindow = Service.Configuration.AtmaAutomation.AutoOpenWindow;
+        if (ImGui.Checkbox("Open the automation window with the Trial of the Braves book", ref autoOpenWindow))
+        {
+            Service.Configuration.AtmaAutomation.AutoOpenWindow = autoOpenWindow;
+            Service.Configuration.Save();
+        }
+
+        var echoState = Service.Configuration.AtmaAutomation.EchoState;
+        if (ImGui.Checkbox("Display automation progress in chat", ref echoState))
+        {
+            Service.Configuration.AtmaAutomation.EchoState = echoState;
+            Service.Configuration.Save();
+        }
+
+        var useMount = Service.Configuration.AtmaAutomation.UseMount;
+        if (ImGui.Checkbox("Use mount roulette for longer travels", ref useMount))
+        {
+            Service.Configuration.AtmaAutomation.UseMount = useMount;
+            Service.Configuration.Save();
+        }
+
+        if (ImGui.Button("Open automation window"))
+        {
+            Service.Plugin.OpenAutomationWindow();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("Automates the Enemies page of the current book.\n" +
+                             "Requires the vnavmesh and Wrath Combo plugins.\n" +
+                             "Note: teleports even when \"Disable Teleport\" is enabled.");
+        }
+
         ImGui.Spacing();
     }
 

@@ -3,8 +3,12 @@ using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
+using ECommons;
+using System;
+using WrathCombo.API;
 using ZodiacBuddy.BonusLight;
 using ZodiacBuddy.Stages.Atma;
+using ZodiacBuddy.Stages.Atma.Automation;
 using ZodiacBuddy.Stages.Brave;
 using ZodiacBuddy.Stages.Novus;
 
@@ -18,6 +22,8 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
     private const string Command = "/pzodiac";
 
     private readonly AtmaManager animusBuddy;
+    private readonly AtmaAutomationManager atmaAutomationManager;
+    private readonly AtmaAutomationWindow atmaAutomationWindow;
     private readonly BraveManager braveManager;
     private readonly ConfigWindow configWindow;
     private readonly NovusManager novusManager;
@@ -35,14 +41,24 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
         Service.Plugin = this;
         Service.Configuration = pluginInterface.GetPluginConfig() as PluginConfiguration ?? new PluginConfiguration();
 
+        ECommonsMain.Init(pluginInterface, this);
+        WrathIPCWrapper.Init(pluginInterface, WrathIPCWrapper.ErrorType.IPCNotReady | WrathIPCWrapper.ErrorType.Unexpected);
+
+        atmaAutomationManager = new AtmaAutomationManager();
+
         windowSystem = new WindowSystem("ZodiacBuddy");
         windowSystem.AddWindow(configWindow = new ConfigWindow());
+        windowSystem.AddWindow(atmaAutomationWindow = new AtmaAutomationWindow(atmaAutomationManager));
 
         Service.Interface.UiBuilder.OpenConfigUi += OnOpenConfigUi;
         Service.Interface.UiBuilder.Draw += windowSystem.Draw;
 
         Service.CommandManager.AddHandler(Command,
-            new CommandInfo(OnCommand) {HelpMessage = "Open a window to edit various settings.", ShowInHelp = true});
+            new CommandInfo(OnCommand)
+            {
+                HelpMessage = "Open a window to edit various settings. Use \"/pzodiac auto\" for the Trial of the Braves automation.",
+                ShowInHelp = true,
+            });
 
         Service.BonusLightManager = new BonusLightManager();
         animusBuddy = new AtmaManager();
@@ -59,9 +75,12 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
         Service.Interface.UiBuilder.OpenConfigUi -= OnOpenConfigUi;
 
         animusBuddy.Dispose();
+        atmaAutomationWindow.Dispose();
+        atmaAutomationManager.Dispose();
         novusManager.Dispose();
         braveManager.Dispose();
         Service.BonusLightManager.Dispose();
+        ECommonsMain.Dispose();
     }
 
     /// <summary>
@@ -75,6 +94,14 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
             .Append(message);
 
         Service.ChatGui.Print(new XivChatEntry {Type = Service.Configuration.ChatType, Message = sb.BuiltString});
+    }
+
+    /// <summary>
+    ///     Open the Trial of the Braves automation window.
+    /// </summary>
+    public void OpenAutomationWindow()
+    {
+        atmaAutomationWindow.IsOpen = true;
     }
 
     /// <summary>
@@ -93,6 +120,12 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
 
     private void OnCommand(string command, string arguments)
     {
+        if (arguments.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            atmaAutomationWindow.IsOpen = true;
+            return;
+        }
+
         configWindow.IsOpen = true;
     }
 }

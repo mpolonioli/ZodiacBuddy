@@ -125,6 +125,8 @@ internal struct BraveBook
                         ZoneId = zoneId,
                         LocationName = locationName,
                         Position = position,
+                        BNpcNameId = mntc.BNpcName.RowId,
+                        RequiredKills = bookRow.MonsterCount[i],
                     };
                 }
 

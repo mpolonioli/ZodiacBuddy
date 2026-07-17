@@ -14,11 +14,23 @@
         "resolved": "1.2.39",
         "contentHash": "fcFN01tDTIQqDuTwr1jUQK/geofiwjG5DycJQOnC72i1SsLAk1ELe+apBOuZ11UMQG8YKFZG1FgvjZPbqHyatg=="
       },
+      "ECommons": {
+        "type": "Direct",
+        "requested": "[3.2.1.15, )",
+        "resolved": "3.2.1.15",
+        "contentHash": "2BowPSMoVC1v8E/jivCnbqbDLaNMN2uy2lih/hrEIANoh2B7PfydUb7zT/EOl86fEK6Hw88k1Vzvmoe/cHb3EA=="
+      },
       "LitJWT": {
         "type": "Direct",
         "requested": "[2.0.2, )",
         "resolved": "2.0.2",
         "contentHash": "6bJefqPtD9W8NgEChq7OYdWc2msBYPV5FJMv7oWZD9UYByCznYTeBmhJwaiThOpsSpcbo8/XNsxKANMyauJ5vQ=="
+      },
+      "WrathCombo.API": {
+        "type": "Direct",
+        "requested": "[0.5.4, )",
+        "resolved": "0.5.4",
+        "contentHash": "L9aHWAqc/rT+jmn+bdgnocWWncZmb8+15kLEcbrIGg6i6W+EuDnghYhe6PIJuiuqa1Bs6J9wvRjz5hblwP628w=="
       }
     }
   }

@@ -34,7 +34,12 @@ internal class AtmaManager : IDisposable
         Service.AddonLifecycle.UnregisterListener(ReceiveEventDetour);
     }
 
-    private static uint GetNearestAetheryte(MapLinkPayload mapLink)
+    /// <summary>
+    ///     Find the aetheryte closest to the given map link within its territory.
+    /// </summary>
+    /// <param name="mapLink">Map link to search around.</param>
+    /// <returns>The aetheryte row ID, or 0 if none was found.</returns>
+    internal static uint GetNearestAetheryte(MapLinkPayload mapLink)
     {
         var closestAetheryteId = 0u;
         var closestDistance = double.MaxValue;
@@ -92,19 +97,29 @@ internal class AtmaManager : IDisposable
         return closestAetheryteId;
     }
 
-    private unsafe void Teleport(uint aetheryteId)
+    /// <summary>
+    ///     Teleport to the given aetheryte, ignoring the "disable teleport" setting.
+    /// </summary>
+    /// <param name="aetheryteId">Aetheryte row ID to teleport to.</param>
+    /// <returns>Whether the teleport request was issued.</returns>
+    internal static unsafe bool ExecuteTeleport(uint aetheryteId)
     {
         if (!Service.ClientState.IsLoggedIn)
         {
-            return;
+            return false;
         }
 
+        return Telepo.Instance()->Teleport(aetheryteId, 0);
+    }
+
+    private void Teleport(uint aetheryteId)
+    {
         if (Service.Configuration.DisableTeleport)
         {
             return;
         }
 
-        Telepo.Instance()->Teleport(aetheryteId, 0);
+        ExecuteTeleport(aetheryteId);
     }
 
     private unsafe void ReceiveEventDetour(AddonEvent type, AddonArgs args)

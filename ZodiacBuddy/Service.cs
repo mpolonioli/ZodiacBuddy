@@ -11,6 +11,7 @@ public class Service
     [PluginService] public static IDalamudPluginInterface Interface { get; set; }
     [PluginService] public static IChatGui ChatGui { get; set; }
     [PluginService] public static IClientState ClientState { get; set; }
+    [PluginService] public static ICondition Condition { get; set; }
     [PluginService] public static IDutyState DutyState { get; set; }
     [PluginService] public static ICommandManager CommandManager { get; set; }
     [PluginService] public static IDataManager DataManager { get; set; }
@@ -19,6 +20,8 @@ public class Service
     [PluginService] public static IToastGui Toasts { get; set; }
     [PluginService] public static IPluginLog PluginLog { get; set; }
     [PluginService] public static IAddonLifecycle AddonLifecycle { get; set; }
+    [PluginService] public static IObjectTable ObjectTable { get; set; }
+    [PluginService] public static ITargetManager TargetManager { get; set; }
     [PluginService] public static IPlayerState PlayerState { get; set; }
     [PluginService] public static ISeStringEvaluator SeStringEvaluator { get; set; }
 

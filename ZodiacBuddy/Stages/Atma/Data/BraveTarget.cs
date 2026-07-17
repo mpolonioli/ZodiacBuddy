@@ -41,4 +41,14 @@ internal struct BraveTarget
     ///     Gets the position that this target is roughly at.
     /// </summary>
     public MapLinkPayload Position { get; init; }
+
+    /// <summary>
+    ///     Gets the BNpcName row ID of the enemy. Only set for enemy targets.
+    /// </summary>
+    public uint BNpcNameId { get; init; }
+
+    /// <summary>
+    ///     Gets the number of kills required to complete this target. Only set for enemy targets.
+    /// </summary>
+    public int RequiredKills { get; init; }
 }

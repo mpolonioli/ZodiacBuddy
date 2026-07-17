@@ -1,4 +1,4 @@
-using Dalamud.Game.ClientState.Conditions;
+﻿using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
@@ -49,6 +49,8 @@ internal sealed class AtmaAutomationManager : IDisposable
     private Vector3 lastPosition;
     private Vector3 lastMobPosition;
     private DateTime lastMovedAt;
+    private DateTime lastTeleportAt;
+    private int teleportAttempts;
     private int repathAttempts;
     private bool reapproachedOnce;
     private int lastProgress;
@@ -166,13 +168,15 @@ internal sealed class AtmaAutomationManager : IDisposable
 
         if (!CanStart(out var reason))
         {
-            ZodiacBuddyPlugin.PrintError(reason);
+            this.LastError = reason;
+            Service.PluginLog.Warning($"[Automation] Cannot start: {reason}");
             return;
         }
 
         if (!this.wrath.BeginControl())
         {
-            ZodiacBuddyPlugin.PrintError("Could not take control of Wrath Combo.");
+            this.LastError = "Could not take control of Wrath Combo.";
+            Service.PluginLog.Warning($"[Automation] {this.LastError}");
             return;
         }
 
@@ -180,7 +184,7 @@ internal sealed class AtmaAutomationManager : IDisposable
         this.currentBook = BraveBook.GetValue(this.startedBookId);
         this.LastError = string.Empty;
         this.blacklist.Clear();
-        this.Echo($"Starting enemies automation for {this.currentBook.Name}.");
+        Log($"Starting enemies automation for {this.currentBook.Name}.");
         this.TransitionTo(AutomationState.SelectNextEnemy);
     }
 
@@ -194,7 +198,7 @@ internal sealed class AtmaAutomationManager : IDisposable
         this.State = AutomationState.Idle;
         this.StatusDetail = string.Empty;
         this.CurrentSlot = -1;
-        this.Echo($"Automation stopped: {reason}");
+        Log($"Automation stopped: {reason}");
     }
 
     /// <inheritdoc />
@@ -281,7 +285,7 @@ internal sealed class AtmaAutomationManager : IDisposable
                 && GetMonsterProgress(this.CurrentSlot) >= this.currentEnemy.RequiredKills)
             {
                 this.navmesh.Stop();
-                this.Echo($"{this.currentEnemy.Name} complete!");
+                Log($"{this.currentEnemy.Name} complete!");
                 this.stateAfterAggro = AutomationState.SelectNextEnemy;
                 this.TransitionTo(AutomationState.HandlingAggro);
                 return;
@@ -384,7 +388,7 @@ internal sealed class AtmaAutomationManager : IDisposable
             this.Cleanup();
             this.State = AutomationState.Completed;
             this.StatusDetail = string.Empty;
-            this.Echo($"The enemies page of {this.currentBook.Name} is complete!");
+            Log($"The enemies page of {this.currentBook.Name} is complete!");
             return;
         }
 
@@ -398,7 +402,7 @@ internal sealed class AtmaAutomationManager : IDisposable
         var z = MapToWorld(mapLink.YCoord, map.SizeFactor, map.OffsetY);
         this.destination = new Vector3(x, 0, z);
 
-        this.Echo($"Next enemy: {this.currentEnemy.Name} in {this.currentEnemy.ZoneName} " +
+        Log($"Next enemy: {this.currentEnemy.Name} in {this.currentEnemy.ZoneName} " +
                   $"({GetMonsterProgress(this.CurrentSlot)}/{this.currentEnemy.RequiredKills}).");
 
         this.TransitionTo(Service.ClientState.TerritoryType == mapLink.TerritoryType.RowId
@@ -412,23 +416,11 @@ internal sealed class AtmaAutomationManager : IDisposable
 
         if (!this.stateEntered)
         {
-            if (Service.Condition[ConditionFlag.InCombat])
-            {
-                // Something is attacking us; deal with it before we can teleport.
-                this.stateAfterAggro = AutomationState.Teleporting;
-                this.TransitionTo(AutomationState.HandlingAggro);
-                return;
-            }
-
-            var aetheryteId = AtmaManager.GetNearestAetheryte(this.currentEnemy.Position);
-            if (aetheryteId == 0 || !AtmaManager.ExecuteTeleport(aetheryteId))
-            {
-                this.Fail($"Could not teleport to {this.currentEnemy.ZoneName}.");
-                return;
-            }
-
+            // Any residual movement would cancel the teleport cast.
+            this.navmesh.Stop();
+            this.teleportAttempts = 0;
+            this.lastTeleportAt = DateTime.MinValue;
             this.stateEntered = true;
-            return;
         }
 
         if (Service.ClientState.TerritoryType == this.currentEnemy.Position.TerritoryType.RowId
@@ -439,7 +431,7 @@ internal sealed class AtmaAutomationManager : IDisposable
             return;
         }
 
-        // The teleport cast was interrupted by an attacker; fight it off and retry.
+        // Something is attacking us; deal with it before we can teleport.
         if (Service.Condition[ConditionFlag.InCombat] && !Service.Condition[ConditionFlag.Casting])
         {
             this.stateAfterAggro = AutomationState.Teleporting;
@@ -447,9 +439,32 @@ internal sealed class AtmaAutomationManager : IDisposable
             return;
         }
 
-        if (this.StateAge > TimeSpan.FromSeconds(60))
+        // While the cast bar is up or we are zoning, just wait.
+        if (Service.Condition[ConditionFlag.Casting]
+            || Service.Condition[ConditionFlag.BetweenAreas]
+            || Service.Condition[ConditionFlag.BetweenAreas51])
         {
-            this.Fail($"Teleport to {this.currentEnemy.ZoneName} timed out.");
+            return;
+        }
+
+        // Issue the teleport; if we still haven't landed (or started casting/zoning)
+        // after a while, the cast silently fizzled - retry it.
+        if (DateTime.UtcNow - this.lastTeleportAt > TimeSpan.FromSeconds(15))
+        {
+            if (++this.teleportAttempts > 5)
+            {
+                this.Fail($"Teleport to {this.currentEnemy.ZoneName} failed repeatedly.");
+                return;
+            }
+
+            var aetheryteId = AtmaManager.GetNearestAetheryte(this.currentEnemy.Position);
+            if (aetheryteId == 0 || !AtmaManager.ExecuteTeleport(aetheryteId))
+            {
+                this.Fail($"Could not teleport to {this.currentEnemy.ZoneName}.");
+                return;
+            }
+
+            this.lastTeleportAt = DateTime.UtcNow;
         }
     }
 
@@ -607,7 +622,7 @@ internal sealed class AtmaAutomationManager : IDisposable
         if (DateTime.UtcNow - this.lastSpawnNoticeAt > TimeSpan.FromSeconds(60))
         {
             this.lastSpawnNoticeAt = DateTime.UtcNow;
-            this.Echo($"Still waiting for {this.currentEnemy.Name} to spawn...");
+            Log($"Still waiting for {this.currentEnemy.Name} to spawn...");
         }
     }
 
@@ -814,7 +829,7 @@ internal sealed class AtmaAutomationManager : IDisposable
         this.State = AutomationState.Errored;
         this.StatusDetail = string.Empty;
         this.LastError = reason;
-        ZodiacBuddyPlugin.PrintError($"Automation stopped: {reason}");
+        Service.PluginLog.Warning($"[Automation] Stopped: {reason}");
     }
 
     private void Cleanup()
@@ -939,11 +954,8 @@ internal sealed class AtmaAutomationManager : IDisposable
         }
     }
 
-    private void Echo(string message)
+    private static void Log(string message)
     {
-        if (Service.Configuration.AtmaAutomation.EchoState)
-        {
-            Service.Plugin.PrintMessage(message);
-        }
+        Service.PluginLog.Information($"[Automation] {message}");
     }
 }

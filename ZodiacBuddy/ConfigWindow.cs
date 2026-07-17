@@ -227,13 +227,6 @@ internal class ConfigWindow : Window
             Service.Configuration.Save();
         }
 
-        var echoState = Service.Configuration.AtmaAutomation.EchoState;
-        if (ImGui.Checkbox("Display automation progress in chat", ref echoState))
-        {
-            Service.Configuration.AtmaAutomation.EchoState = echoState;
-            Service.Configuration.Save();
-        }
-
         var useMount = Service.Configuration.AtmaAutomation.UseMount;
         if (ImGui.Checkbox("Use mount roulette for longer travels", ref useMount))
         {

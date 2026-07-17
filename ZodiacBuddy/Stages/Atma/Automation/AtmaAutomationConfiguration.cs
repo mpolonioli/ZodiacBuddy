@@ -12,11 +12,6 @@ public class AtmaAutomationConfiguration
     public bool AutoOpenWindow { get; set; } = true;
 
     /// <summary>
-    ///     Gets or sets a value indicating whether to echo automation progress to the chat.
-    /// </summary>
-    public bool EchoState { get; set; } = true;
-
-    /// <summary>
     ///     Gets or sets a value indicating whether to use the mount roulette for longer travels.
     /// </summary>
     public bool UseMount { get; set; } = true;

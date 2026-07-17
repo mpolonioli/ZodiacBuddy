@@ -284,28 +284,33 @@ internal sealed class AtmaAutomationManager : IDisposable
     internal static unsafe bool TryUseGeneralAction(uint actionId)
     {
         var actionManager = CSGame.ActionManager.Instance();
-        return actionManager->GetActionStatus(CSGame.ActionType.GeneralAction, actionId) == 0
-               && actionManager->UseAction(CSGame.ActionType.GeneralAction, actionId);
-    }
-
-    private static unsafe bool CanUseGeneralAction(uint actionId)
-        => CSGame.ActionManager.Instance()->GetActionStatus(CSGame.ActionType.GeneralAction, actionId) == 0;
-
-    /// <summary>
-    ///     Check whether flying is unlocked in the given territory.
-    /// </summary>
-    /// <param name="territoryId">Territory ID.</param>
-    /// <returns>Whether flying is unlocked.</returns>
-    internal static unsafe bool IsFlyingUnlocked(uint territoryId)
-    {
-        var flagSet = Service.DataManager.GetExcelSheet<TerritoryType>().GetRow(territoryId).AetherCurrentCompFlgSet.RowId;
-        if (flagSet == 0)
+        var status = actionManager->GetActionStatus(CSGame.ActionType.GeneralAction, actionId);
+        if (status != 0)
         {
+            Service.PluginLog.Debug($"[Automation] General action {actionId} unavailable (status {status}).");
             return false;
         }
 
-        var playerState = CSGame.UI.PlayerState.Instance();
-        return playerState != null && playerState->IsAetherCurrentZoneComplete(flagSet);
+        return actionManager->UseAction(CSGame.ActionType.GeneralAction, actionId);
+    }
+
+    /// <summary>
+    ///     Check whether flying is available here right now.
+    /// </summary>
+    /// <returns>Whether flying is available.</returns>
+    internal static bool IsFlightAvailable()
+    {
+        // The game's flight gate only answers reliably while mounted (it also
+        // covers ground-only mounts from the roulette). Unmounted it reports
+        // false even where flight works, so assume flight is possible then -
+        // anyone working on a Zodiac relic has finished the ARR MSQ. If the
+        // assumption is ever wrong, the stuck recovery re-plans on the ground.
+        if (!Service.Condition[ConditionFlag.Mounted])
+        {
+            return true;
+        }
+
+        return CSGame.Control.Control.CanFly;
     }
 
     private void OnUpdate(IFramework framework)
@@ -608,8 +613,9 @@ internal sealed class AtmaAutomationManager : IDisposable
 
             // Flying requires a mount; mount up before probing so the probe mode
             // matches how we will actually travel. Ground travel also mounts for
-            // longer legs, purely for speed.
-            if ((wantFly || this.ShouldMount(player.Position)) && this.StateAge < TimeSpan.FromSeconds(6))
+            // longer legs, purely for speed. The window is generous because the
+            // post-zoning action lockout eats into it.
+            if ((wantFly || this.ShouldMount(player.Position)) && this.StateAge < TimeSpan.FromSeconds(10))
             {
                 if (EzThrottler.Throttle("ZodiacBuddy.AtmaAuto.Mount", 1000))
                 {
@@ -622,7 +628,13 @@ internal sealed class AtmaAutomationManager : IDisposable
                 }
             }
 
-            this.probingFly = wantFly && Service.Condition[ConditionFlag.Mounted];
+            // Re-evaluate after mounting: the game reports flight as available
+            // only in situations that can change with the mount.
+            this.probingFly = this.WantFly() && Service.Condition[ConditionFlag.Mounted];
+            Service.PluginLog.Debug(
+                $"[Automation] Route probe: fly={this.probingFly} " +
+                $"(canFly={CSGame.Control.Control.CanFly}, mounted={Service.Condition[ConditionFlag.Mounted]}, " +
+                $"flyDisabledForLeg={this.flyDisabledForLeg})");
             this.probeTask = this.navmesh.Pathfind(player.Position, this.destination, this.probingFly);
             if (this.probeTask is null)
             {
@@ -994,11 +1006,13 @@ internal sealed class AtmaAutomationManager : IDisposable
 
     private bool ShouldMount(Vector3 from)
     {
+        // Deliberately no action-status pre-check: right after zoning, actions
+        // are briefly locked and the status would wrongly veto mounting. The
+        // mount retry loop deals with transient failures instead.
         return Service.Configuration.AtmaAutomation.UseMount
                && !Service.Condition[ConditionFlag.Mounted]
                && !Service.Condition[ConditionFlag.InCombat]
-               && Vector3.Distance(from, this.destination) > MountDistance
-               && CanUseGeneralAction(MountRouletteActionId);
+               && Vector3.Distance(from, this.destination) > MountDistance;
     }
 
     private bool WantFly()
@@ -1007,8 +1021,7 @@ internal sealed class AtmaAutomationManager : IDisposable
         return configuration.UseMount
                && configuration.UseFlight
                && !this.flyDisabledForLeg
-               && IsFlyingUnlocked(Service.ClientState.TerritoryType)
-               && (Service.Condition[ConditionFlag.Mounted] || CanUseGeneralAction(MountRouletteActionId));
+               && IsFlightAvailable();
     }
 
     private void OnProbeFailed()

@@ -228,7 +228,7 @@ internal sealed class BookTravelManager : IDisposable
         var configuration = Service.Configuration.AtmaAutomation;
         this.fly = configuration.UseMount
                    && configuration.UseFlight
-                   && AtmaAutomationManager.IsFlyingUnlocked(Service.ClientState.TerritoryType);
+                   && AtmaAutomationManager.IsFlightAvailable();
         var wantMount = configuration.UseMount
                         && (this.fly || Vector3.Distance(player.Position, this.destination) > MountDistance);
 
@@ -250,7 +250,7 @@ internal sealed class BookTravelManager : IDisposable
             return;
         }
 
-        Log($"Traveling to {this.target.Name}...");
+        Log($"Traveling to {this.target.Name}... (fly={this.fly})");
         this.repathAttempts = 0;
         this.ResetStuckDetection(player.Position);
         this.TransitionTo(TravelState.Traveling);

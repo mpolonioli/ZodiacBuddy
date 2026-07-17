@@ -145,7 +145,13 @@ internal struct BraveBook
 
                     var position = GetMonsterPosition(mntc.RowId);
 
-                    var cfcId = position.TerritoryType.Value.ContentFinderCondition.Value.RowId;
+                    var cfc = position.TerritoryType.Value.ContentFinderCondition.Value;
+                    var cfcId = cfc.RowId;
+
+                    // AutoDuty keys its paths by the territory the content finder
+                    // condition loads into (e.g. 1330 for Dzemael Darkhold), which
+                    // is not always the map-link territory (171) used above.
+                    var dutyTerritoryId = cfc.TerritoryType.RowId;
 
                     // Service.PluginLog.Debug($"Loaded dungeon {mntcID}: {name}");
                     braveBook.Dungeons[i] = new BraveTarget
@@ -156,6 +162,7 @@ internal struct BraveBook
                         LocationName = locationName,
                         Position = position,
                         ContentsFinderConditionId = cfcId,
+                        DutyTerritoryId = dutyTerritoryId,
                     };
                 }
 

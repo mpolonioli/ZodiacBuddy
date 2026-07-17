@@ -241,6 +241,17 @@ internal sealed class AtmaAutomationManager : IDisposable
     }
 
     /// <summary>
+    ///     Get whether a book dungeon slot has been completed.
+    /// </summary>
+    /// <param name="slot">Dungeon slot, 0 to 2.</param>
+    /// <returns>Whether the dungeon is complete; false when no book is active.</returns>
+    internal static unsafe bool IsDungeonComplete(int slot)
+    {
+        var relicNote = RelicNote.Instance();
+        return relicNote != null && relicNote->IsDungeonComplete(slot);
+    }
+
+    /// <summary>
     ///     Get the RelicNote row ID of the currently active book.
     /// </summary>
     /// <returns>The book ID, or 0 when no book is active.</returns>

@@ -33,6 +33,14 @@ internal struct BraveTarget
     public uint ContentsFinderConditionId { get; init; }
 
     /// <summary>
+    ///     Gets the territory the duty loads into, taken from its content finder
+    ///     condition. This is the territory AutoDuty keys its paths by, which can
+    ///     differ from the map-link territory for dungeons that gained Duty Support.
+    ///     Only set for dungeon targets.
+    /// </summary>
+    public uint DutyTerritoryId { get; init; }
+
+    /// <summary>
     ///     Gets the Fate row ID. Only set for FATE targets.
     /// </summary>
     public uint FateId { get; init; }

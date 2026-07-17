@@ -140,7 +140,7 @@ internal class AtmaManager : IDisposable
     {
         if (Service.Configuration.AtmaAutomation.UseAutoDutyForDungeons && AutoDutyIpc.IsInstalled)
         {
-            var territoryId = target.Position.TerritoryType.RowId;
+            var territoryId = target.DutyTerritoryId != 0 ? target.DutyTerritoryId : target.Position.TerritoryType.RowId;
             if (this.autoDuty.HasPath(territoryId) && this.autoDuty.RunUnsynced(territoryId))
             {
                 Service.Plugin.PrintMessage($"Starting an unsynced AutoDuty run of {target.ZoneName}.");

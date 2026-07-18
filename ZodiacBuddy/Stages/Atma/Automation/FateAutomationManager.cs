@@ -1339,15 +1339,7 @@ internal sealed class FateAutomationManager : IDisposable
         this.StatusDetail = "Fighting off attackers...";
         var player = Service.ObjectTable.LocalPlayer!;
 
-        // Friendly NPCs (e.g. an escorted one) can also "target" the player;
-        // only hostiles count as attackers.
-        var attacker = Service.ObjectTable.OfType<IBattleNpc>()
-            .Where(b => !b.IsDead
-                        && b.IsTargetable
-                        && b.IsHostile()
-                        && b.TargetObjectId == player.GameObjectId)
-            .OrderBy(b => Vector3.DistanceSquared(b.Position, player.Position))
-            .FirstOrDefault();
+        var attacker = AtmaAutomationManager.FindLingeringAttacker(player);
 
         if (attacker is null && !Service.Condition[ConditionFlag.InCombat])
         {

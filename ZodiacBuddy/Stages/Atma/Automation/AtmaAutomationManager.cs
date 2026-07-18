@@ -1,4 +1,5 @@
 ﻿using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
@@ -28,6 +29,12 @@ internal sealed class AtmaAutomationManager : IDisposable
     private const float ExtraMeleeRange = 2.5f;
     private const float RangedAttackBonus = 8f;
     private const float MountDistance = 30f;
+
+    // While mopping up after a fight, only enemies within this range of the
+    // player count as attackers worth chasing, so we don't run off across the
+    // zone toward mobs that are merely in combat with someone else.
+    private const float AggroSearchRange = 40f;
+
     private const uint JumpActionId = 2;
     private const uint MountRouletteActionId = 9;
     private const uint DismountActionId = 23;
@@ -318,6 +325,33 @@ internal sealed class AtmaAutomationManager : IDisposable
         }
 
         return range;
+    }
+
+    /// <summary>
+    ///     Find a hostile combatant that is keeping the player in combat, so it can
+    ///     be finished off. Besides the enemy attacking the player directly, this
+    ///     catches any nearby enemy still flagged in combat - a straggler that
+    ///     engaged during a FATE (often one attacking the chocobo companion rather
+    ///     than the player) and never disengaged - which otherwise leaves the
+    ///     automation stuck "fighting off attackers" indefinitely.
+    /// </summary>
+    /// <param name="player">The local player.</param>
+    /// <returns>The nearest such enemy, or <c>null</c> if none is around.</returns>
+    internal static IBattleNpc? FindLingeringAttacker(IPlayerCharacter player)
+    {
+        return Service.ObjectTable.OfType<IBattleNpc>()
+            .Where(b => !b.IsDead
+                        && b.IsTargetable
+                        && b.IsHostile()
+                        && b.BattleNpcKind == BattleNpcSubKind.Combatant
+                        && Vector3.Distance(b.Position, player.Position) <= AggroSearchRange
+                        && (b.TargetObjectId == player.GameObjectId
+                            || b.StatusFlags.HasFlag(StatusFlags.InCombat)))
+
+            // Whatever is on the player comes first, then the closest.
+            .OrderByDescending(b => b.TargetObjectId == player.GameObjectId)
+            .ThenBy(b => Vector3.DistanceSquared(b.Position, player.Position))
+            .FirstOrDefault();
     }
 
     /// <summary>
@@ -1039,14 +1073,7 @@ internal sealed class AtmaAutomationManager : IDisposable
         this.StatusDetail = "Fighting off attackers...";
         var player = Service.ObjectTable.LocalPlayer!;
 
-        // Friendly NPCs can also "target" the player; only hostiles count as attackers.
-        var attacker = Service.ObjectTable.OfType<IBattleNpc>()
-            .Where(b => !b.IsDead
-                        && b.IsTargetable
-                        && b.IsHostile()
-                        && b.TargetObjectId == player.GameObjectId)
-            .OrderBy(b => Vector3.DistanceSquared(b.Position, player.Position))
-            .FirstOrDefault();
+        var attacker = FindLingeringAttacker(player);
 
         if (attacker is null && !Service.Condition[ConditionFlag.InCombat])
         {

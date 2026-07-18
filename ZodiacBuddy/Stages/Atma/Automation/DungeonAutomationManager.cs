@@ -13,7 +13,7 @@ namespace ZodiacBuddy.Stages.Atma.Automation;
 ///     through each incomplete dungeon and runs it unsynced through AutoDuty,
 ///     advancing to the next one when AutoDuty finishes.
 /// </summary>
-internal sealed class DungeonAutomationManager : IDisposable
+internal sealed class DungeonAutomationManager : IDisposable, IBookAutomation
 {
     private readonly AutoDutyIpc autoDuty;
     private readonly BookTravelManager bookTravel;
@@ -62,6 +62,9 @@ internal sealed class DungeonAutomationManager : IDisposable
     ///     Gets a value indicating whether the automation is currently running.
     /// </summary>
     public bool IsRunning => this.State is not (DungeonAutomationState.Idle or DungeonAutomationState.Completed or DungeonAutomationState.Errored);
+
+    /// <inheritdoc />
+    public bool IsCompleted => this.State == DungeonAutomationState.Completed;
 
     private TimeSpan StateAge => DateTime.UtcNow - this.stateEnteredAt;
 

@@ -22,7 +22,7 @@ namespace ZodiacBuddy.Stages.Atma.Automation;
 ///     each incomplete enemy, navigates to its area with vnavmesh, scans for it and
 ///     lets Wrath Combo kill it until the book page is complete.
 /// </summary>
-internal sealed class AtmaAutomationManager : IDisposable
+internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
 {
     private const float EarlyTargetRange = 40f;
     private const float RoamRange = 30f;
@@ -120,6 +120,9 @@ internal sealed class AtmaAutomationManager : IDisposable
     ///     Gets a value indicating whether the automation is currently running.
     /// </summary>
     public bool IsRunning => this.State is not (AutomationState.Idle or AutomationState.Completed or AutomationState.Errored);
+
+    /// <inheritdoc />
+    public bool IsCompleted => this.State == AutomationState.Completed;
 
     private TimeSpan StateAge => DateTime.UtcNow - this.stateEnteredAt;
 

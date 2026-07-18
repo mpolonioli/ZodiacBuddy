@@ -21,7 +21,7 @@ namespace ZodiacBuddy.Stages.Atma.Automation;
 ///     levequests are ever handed in - other completed levequests in the journal
 ///     are never touched.
 /// </summary>
-internal sealed class LeveAutomationManager : IDisposable
+internal sealed class LeveAutomationManager : IDisposable, IBookAutomation
 {
     private const float MountDistance = 30f;
     private const uint MountRouletteActionId = 9;
@@ -99,6 +99,9 @@ internal sealed class LeveAutomationManager : IDisposable
     ///     Gets a value indicating whether the automation is currently running.
     /// </summary>
     public bool IsRunning => this.State is not (LeveAutomationState.Idle or LeveAutomationState.Completed or LeveAutomationState.Errored);
+
+    /// <inheritdoc />
+    public bool IsCompleted => this.State == LeveAutomationState.Completed;
 
     private TimeSpan StateAge => DateTime.UtcNow - this.stateEnteredAt;
 

@@ -23,7 +23,7 @@ namespace ZodiacBuddy.Stages.Atma.Automation;
 ///     its NPC when needed, level syncs, and fights level-synced with Wrath Combo
 ///     until the book counts it. Collect FATEs are handed in automatically.
 /// </summary>
-internal sealed class FateAutomationManager : IDisposable
+internal sealed class FateAutomationManager : IDisposable, IBookAutomation
 {
     private const float MountDistance = 30f;
     private const uint MountRouletteActionId = 9;
@@ -132,6 +132,9 @@ internal sealed class FateAutomationManager : IDisposable
     ///     Gets a value indicating whether the automation is currently running.
     /// </summary>
     public bool IsRunning => this.State is not (FateAutomationState.Idle or FateAutomationState.Completed or FateAutomationState.Errored);
+
+    /// <inheritdoc />
+    public bool IsCompleted => this.State == FateAutomationState.Completed;
 
     private TimeSpan StateAge => DateTime.UtcNow - this.stateEnteredAt;
 

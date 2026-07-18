@@ -77,6 +77,23 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
 
         var book = BraveBook.GetValue(bookId);
         ImGui.Text($"Book: {book.Name}");
+
+        var chain = Service.Configuration.AtmaAutomation.ChainAutomations;
+        if (ImGui.Checkbox("Chain steps", ref chain))
+        {
+            Service.Configuration.AtmaAutomation.ChainAutomations = chain;
+            Service.Configuration.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "When a step finishes, automatically start the next book step that\n" +
+                "still has work to do, wrapping around the order (Enemies, Dungeons,\n" +
+                "FATEs, Levequests). Press the Start button of any step to run the\n" +
+                "whole book from there.");
+        }
+
         ImGui.Spacing();
 
         if (!ImGui.BeginTabBar("##AtmaAutomationTabs"))

@@ -32,4 +32,11 @@ public class AtmaAutomationConfiguration
     ///     starts an unsynced AutoDuty run instead of opening the duty finder.
     /// </summary>
     public bool UseAutoDutyForDungeons { get; set; } = true;
+
+    /// <summary>
+    ///     Gets or sets a value indicating whether finishing one automation step
+    ///     automatically starts the next book step that still has work to do, so
+    ///     the whole book can run from a single Start press.
+    /// </summary>
+    public bool ChainAutomations { get; set; } = true;
 }

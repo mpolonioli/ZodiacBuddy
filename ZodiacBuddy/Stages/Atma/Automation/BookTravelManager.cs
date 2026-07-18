@@ -271,25 +271,18 @@ internal sealed class BookTravelManager : IDisposable
             return;
         }
 
-        // A flying path can end hovering in place; land before checking the
-        // arrival so the dismount happens on the ground.
-        if (AtmaAutomationManager.LandIfHovering(this.navmesh, this.destination, "ZodiacBuddy.BookTravel.Land"))
+        // A flying path can end hovering in place; land first so we finish on
+        // foot. A flag can sit on terrain the game will not let us dismount onto
+        // (a rock or small object), so the helper gives up after a few seconds
+        // and we count hovering at the flag as arrival rather than hovering
+        // there forever.
+        if (AtmaAutomationManager.LandIfHovering(this.navmesh, "ZodiacBuddy.BookTravel.Land"))
         {
             return;
         }
 
         if (Vector3.Distance(player.Position, this.destination) <= 5f && !this.navmesh.IsPathRunning)
         {
-            if (Service.Condition[ConditionFlag.Mounted])
-            {
-                if (EzThrottler.Throttle("ZodiacBuddy.BookTravel.Dismount", 500))
-                {
-                    AtmaAutomationManager.TryUseGeneralAction(DismountActionId);
-                }
-
-                return;
-            }
-
             this.state = TravelState.Idle;
             Log($"Arrived at {this.target.Name}.");
             return;

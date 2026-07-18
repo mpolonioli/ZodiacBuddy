@@ -733,34 +733,33 @@ internal sealed class FateAutomationManager : IDisposable
             return;
         }
 
-        // Arrival, only once back on the ground; the follow-up states dismount
-        // and can't do that in mid-air.
-        if (!Service.Condition[ConditionFlag.InFlight])
+        // A flying path ends hovering above the destination; land first so we
+        // arrive on foot when the spot allows it. If it does not (a rock or
+        // small object), the helper gives up and arrival proceeds airborne -
+        // TalkingToStartNpc/EnteringFate/WaitingForFate all descend at the FATE
+        // on their own.
+        if (AtmaAutomationManager.LandIfHovering(this.navmesh, "ZodiacBuddy.FateAuto.Land"))
         {
-            if (this.travelingToFate
-                && (IsInsideFateArea(travelFate!, player.Position)
-                    || (Vector3.Distance(player.Position, this.travelGoal) <= 10f && !this.navmesh.IsPathRunning)))
-            {
-                this.navmesh.Stop();
-                this.TransitionTo(travelFate!.State == FateState.Preparing
-                    ? FateAutomationState.TalkingToStartNpc
-                    : FateAutomationState.EnteringFate);
-                return;
-            }
-
-            if (!this.travelingToFate
-                && Vector3.Distance(player.Position, this.travelGoal) <= 5f
-                && !this.navmesh.IsPathRunning)
-            {
-                this.TransitionTo(FateAutomationState.WaitingForFate);
-                return;
-            }
+            return;
         }
 
-        // A flying path ends hovering above the destination; land so the
-        // arrival checks above can pass instead of tripping the stuck loop.
-        if (AtmaAutomationManager.LandIfHovering(this.navmesh, this.travelGoal, "ZodiacBuddy.FateAuto.Land"))
+        // Arrival.
+        if (this.travelingToFate
+            && (IsInsideFateArea(travelFate!, player.Position)
+                || (Vector3.Distance(player.Position, this.travelGoal) <= 10f && !this.navmesh.IsPathRunning)))
         {
+            this.navmesh.Stop();
+            this.TransitionTo(travelFate!.State == FateState.Preparing
+                ? FateAutomationState.TalkingToStartNpc
+                : FateAutomationState.EnteringFate);
+            return;
+        }
+
+        if (!this.travelingToFate
+            && Vector3.Distance(player.Position, this.travelGoal) <= 5f
+            && !this.navmesh.IsPathRunning)
+        {
+            this.TransitionTo(FateAutomationState.WaitingForFate);
             return;
         }
 
@@ -981,7 +980,7 @@ internal sealed class FateAutomationManager : IDisposable
         // A flying approach ends hovering at the FATE's edge; land so the
         // inside-the-FATE check above can pass and the dismount happens on
         // the ground.
-        if (AtmaAutomationManager.LandIfHovering(this.navmesh, fate.Position, "ZodiacBuddy.FateAuto.Land"))
+        if (AtmaAutomationManager.LandIfHovering(this.navmesh, "ZodiacBuddy.FateAuto.Land"))
         {
             return;
         }

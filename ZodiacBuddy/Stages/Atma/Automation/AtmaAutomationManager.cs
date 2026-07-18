@@ -32,6 +32,10 @@ internal sealed class AtmaAutomationManager : IDisposable
     private const uint MountRouletteActionId = 9;
     private const uint DismountActionId = 23;
 
+    // When each hover-landing attempt began, keyed by the caller's throttle key,
+    // so the shared helper can abandon an unlandable spot after a few seconds.
+    private static readonly Dictionary<string, DateTime> HoverLandingStartedAt = [];
+
     private readonly NavmeshIpc navmesh;
     private readonly WrathComboIpc wrath;
     private readonly AdvancedUnstuck unstuck;
@@ -356,46 +360,50 @@ internal sealed class AtmaAutomationManager : IDisposable
     /// <summary>
     ///     Land after a flying path ended while still airborne. vnavmesh flies to
     ///     within path tolerance of the ground destination but never switches out
-    ///     of flight, so InFlight stays set and arrival checks gated on it can
-    ///     never pass. Near the goal the only thing that lands is dismounting
-    ///     (a hop of at most a few yalms; a ground path completes instantly
-    ///     within tolerance without moving). Further out - a path ended early -
-    ///     a ground path drags the mount down and finishes the leg.
+    ///     of flight, so InFlight stays set and the player hovers just above the
+    ///     goal; dismounting drops the small remaining height. The destination can
+    ///     sit on terrain the game refuses to dismount onto (a rock or a small
+    ///     object), so after a few seconds of failed attempts this gives up and
+    ///     lets the caller treat hovering at the destination as arrival - the
+    ///     follow-up states descend on their own at the actual enemy, FATE, or
+    ///     NPC, all of which stand on landable ground.
     /// </summary>
     /// <param name="navmesh">Navmesh IPC of the calling manager.</param>
-    /// <param name="goal">The travel goal to land at.</param>
-    /// <param name="throttleKey">Throttle key for the landing actions.</param>
-    /// <returns>Whether a landing is in progress and the caller should wait.</returns>
-    internal static bool LandIfHovering(NavmeshIpc navmesh, Vector3 goal, string throttleKey)
+    /// <param name="throttleKey">Throttle key for the landing action, also the
+    ///     key under which the give-up deadline is tracked.</param>
+    /// <returns>Whether a landing is still being attempted and the caller should
+    ///     wait; false once landed or once the attempt is abandoned.</returns>
+    internal static bool LandIfHovering(NavmeshIpc navmesh, string throttleKey)
     {
+        // Only a flying path that has stopped leaves us hovering; while a path or
+        // pathfind is still running the descent (or the leg) is not finished yet.
         if (!Service.Condition[ConditionFlag.InFlight]
             || navmesh.IsPathRunning
             || navmesh.IsPathfindInProgress)
         {
+            HoverLandingStartedAt.Remove(throttleKey);
             return false;
         }
 
-        var player = Service.ObjectTable.LocalPlayer;
-        if (player is null)
+        if (!HoverLandingStartedAt.TryGetValue(throttleKey, out var since))
         {
-            return true;
+            since = DateTime.UtcNow;
+            HoverLandingStartedAt[throttleKey] = since;
         }
 
-        if (Vector3.Distance(player.Position, goal) <= 5f)
+        if (EzThrottler.Throttle(throttleKey, 1000))
         {
-            if (EzThrottler.Throttle(throttleKey, 1000))
-            {
-                Service.PluginLog.Debug("[Automation] Flying path ended hovering at the destination; dismounting to land.");
-                TryUseGeneralAction(DismountActionId);
-            }
-
-            return true;
+            Service.PluginLog.Debug("[Automation] Flying path ended hovering at the destination; dismounting to land.");
+            TryUseGeneralAction(DismountActionId);
         }
 
-        if (EzThrottler.Throttle(throttleKey, 2000))
+        // A landable spot clears InFlight well under a second; if it has not
+        // cleared after several, the spot is not landable - stop waiting.
+        if (DateTime.UtcNow - since > TimeSpan.FromSeconds(4))
         {
-            Service.PluginLog.Debug("[Automation] Flying path ended airborne away from the destination; continuing on a ground path.");
-            navmesh.PathfindAndMoveTo(goal, false);
+            HoverLandingStartedAt.Remove(throttleKey);
+            Service.PluginLog.Debug("[Automation] Could not dismount at the destination; proceeding while airborne.");
+            return false;
         }
 
         return true;
@@ -811,26 +819,17 @@ internal sealed class AtmaAutomationManager : IDisposable
             }
         }
 
-        // A flying path can end hovering in place; land before checking the
-        // arrival so the dismount happens on the ground.
-        if (LandIfHovering(this.navmesh, this.destination, "ZodiacBuddy.AtmaAuto.Land"))
+        // The flying path leaves us hovering just over the destination; land if
+        // the spot allows it. An unlandable spot still counts as arrival -
+        // Scanning roams and MovingToEnemy dismounts at the enemy on landable
+        // ground, so there is no need to be on foot here.
+        if (LandIfHovering(this.navmesh, "ZodiacBuddy.AtmaAuto.Land"))
         {
             return;
         }
 
         if (Vector3.Distance(player.Position, this.destination) <= 5f && !this.navmesh.IsPathRunning)
         {
-            // Get back on the ground before scanning and fighting.
-            if (Service.Condition[ConditionFlag.Mounted])
-            {
-                if (EzThrottler.Throttle("ZodiacBuddy.AtmaAuto.Dismount", 500))
-                {
-                    TryUseGeneralAction(DismountActionId);
-                }
-
-                return;
-            }
-
             this.TransitionTo(AutomationState.Scanning);
             return;
         }

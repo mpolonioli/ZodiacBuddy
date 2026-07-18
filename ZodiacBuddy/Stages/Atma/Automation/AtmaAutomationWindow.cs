@@ -11,14 +11,15 @@ namespace ZodiacBuddy.Stages.Atma.Automation;
 
 /// <summary>
 ///     Status window of the Trial of the Braves automation, split into an Enemies
-///     tab (driven by this plugin), a Dungeons tab (run through AutoDuty) and a
-///     FATEs tab (driven by this plugin).
+///     tab (driven by this plugin), a Dungeons tab (run through AutoDuty), a
+///     FATEs tab and a Levequests tab (driven by this plugin).
 /// </summary>
 internal sealed class AtmaAutomationWindow : Window, IDisposable
 {
     private readonly AtmaAutomationManager manager;
     private readonly DungeonAutomationManager dungeonManager;
     private readonly FateAutomationManager fateManager;
+    private readonly LeveAutomationManager leveManager;
 
     private bool navmeshInstalled;
     private bool wrathAvailable;
@@ -30,12 +31,14 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
     /// <param name="manager">The enemies automation manager driven by this window.</param>
     /// <param name="dungeonManager">The dungeons automation manager driven by this window.</param>
     /// <param name="fateManager">The FATEs automation manager driven by this window.</param>
-    public AtmaAutomationWindow(AtmaAutomationManager manager, DungeonAutomationManager dungeonManager, FateAutomationManager fateManager)
+    /// <param name="leveManager">The levequests automation manager driven by this window.</param>
+    public AtmaAutomationWindow(AtmaAutomationManager manager, DungeonAutomationManager dungeonManager, FateAutomationManager fateManager, LeveAutomationManager leveManager)
         : base("Trial of the Braves Automation###ZodiacBuddyAtmaAutomation")
     {
         this.manager = manager;
         this.dungeonManager = dungeonManager;
         this.fateManager = fateManager;
+        this.leveManager = leveManager;
 
         this.RespectCloseHotkey = true;
         this.SizeCondition = ImGuiCond.FirstUseEver;
@@ -96,6 +99,12 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
         if (ImGui.BeginTabItem("FATEs"))
         {
             this.DrawFatesTab(book);
+            ImGui.EndTabItem();
+        }
+
+        if (ImGui.BeginTabItem("Leves"))
+        {
+            this.DrawLevesTab(book);
             ImGui.EndTabItem();
         }
 
@@ -195,6 +204,12 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
             {
                 canStart = false;
                 reason = "The FATEs automation is running.";
+            }
+
+            if (canStart && this.leveManager.IsRunning)
+            {
+                canStart = false;
+                reason = "The levequests automation is running.";
             }
 
             ImGui.BeginDisabled(!canStart);
@@ -337,6 +352,12 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
                 reason = "The dungeons automation is running.";
             }
 
+            if (canStart && this.leveManager.IsRunning)
+            {
+                canStart = false;
+                reason = "The levequests automation is running.";
+            }
+
             ImGui.BeginDisabled(!canStart);
             if (ImGui.Button("Start"))
             {
@@ -373,6 +394,132 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
             "Note: the automation teleports even though \"Disable Teleport\" is enabled.");
     }
 
+    private void DrawLevesTab(BraveBook book)
+    {
+        DrawStatusLine("vnavmesh:", this.navmeshInstalled, "Installed", "Not installed");
+        DrawStatusLine("Wrath Combo:", this.wrathAvailable, "Ready", "Not available");
+        ImGui.Separator();
+
+        this.DrawLevesTable(book);
+
+        ImGui.Separator();
+        ImGui.TextColored(
+            ImGuiColors.DalamudGrey,
+            "Accept and complete the levequests yourself; Start hands the completed ones in.");
+        this.DrawLeveControls();
+    }
+
+    private void DrawLevesTable(BraveBook book)
+    {
+        if (!ImGui.BeginTable("##AtmaAutomationLeves", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+        {
+            return;
+        }
+
+        ImGui.TableSetupColumn("##Current", ImGuiTableColumnFlags.WidthFixed, 20f);
+        ImGui.TableSetupColumn("Levequest");
+        ImGui.TableSetupColumn("Issuer");
+        ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 110f);
+        ImGui.TableHeadersRow();
+
+        for (var i = 0; i < book.Leves.Length; i++)
+        {
+            var leve = book.Leves[i];
+            var status = LeveAutomationManager.GetSlotStatus(leve, i);
+
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            if (this.leveManager.IsRunning && this.leveManager.CurrentSlot == i)
+            {
+                ImGui.TextColored(ImGuiColors.DalamudYellow, ">");
+            }
+
+            ImGui.TableNextColumn();
+            ImGui.Text(leve.Name);
+            ImGui.TableNextColumn();
+            ImGui.Text(leve.Issuer);
+            ImGui.TableNextColumn();
+            var (color, text) = status switch
+            {
+                LeveSlotStatus.HandedIn => (ImGuiColors.HealerGreen, "Handed in"),
+                LeveSlotStatus.ReadyToHandIn => (ImGuiColors.DalamudYellow, "Ready to hand in"),
+                LeveSlotStatus.Failed => (ImGuiColors.DalamudRed, "Failed"),
+                LeveSlotStatus.InProgress => (ImGuiColors.DalamudWhite, "In progress"),
+                _ => (ImGuiColors.DalamudGrey, "Not accepted"),
+            };
+            ImGui.TextColored(color, text);
+        }
+
+        ImGui.EndTable();
+    }
+
+    private void DrawLeveControls()
+    {
+        if (this.leveManager.IsRunning)
+        {
+            if (ImGui.Button("Stop"))
+            {
+                this.leveManager.Stop("stopped by user.");
+            }
+        }
+        else
+        {
+            // All automations drive the character; never run two at once.
+            var canStart = LeveAutomationManager.CanStart(this.navmeshInstalled, this.wrathAvailable, out var reason);
+            if (canStart && this.manager.IsRunning)
+            {
+                canStart = false;
+                reason = "The enemies automation is running.";
+            }
+
+            if (canStart && this.dungeonManager.IsRunning)
+            {
+                canStart = false;
+                reason = "The dungeons automation is running.";
+            }
+
+            if (canStart && this.fateManager.IsRunning)
+            {
+                canStart = false;
+                reason = "The FATEs automation is running.";
+            }
+
+            ImGui.BeginDisabled(!canStart);
+            if (ImGui.Button("Start"))
+            {
+                this.leveManager.Start();
+            }
+
+            ImGui.EndDisabled();
+            if (!canStart && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip(reason);
+            }
+        }
+
+        ImGui.SameLine();
+        ImGui.Text($"State: {this.leveManager.State}");
+
+        if (this.leveManager.StatusDetail.Length > 0)
+        {
+            ImGui.Text(this.leveManager.StatusDetail);
+        }
+
+        if (this.leveManager.LastError.Length > 0)
+        {
+            ImGui.TextColored(ImGuiColors.DalamudRed, this.leveManager.LastError);
+        }
+
+        if (!Service.Configuration.DisableTeleport)
+        {
+            return;
+        }
+
+        ImGui.TextColored(
+            ImGuiColors.DalamudGrey,
+            "Note: the automation teleports even though \"Disable Teleport\" is enabled.");
+    }
+
     private void DrawControls()
     {
         if (this.manager.IsRunning)
@@ -397,6 +544,12 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
             {
                 canStart = false;
                 reason = "The FATEs automation is running.";
+            }
+
+            if (canStart && this.leveManager.IsRunning)
+            {
+                canStart = false;
+                reason = "The levequests automation is running.";
             }
 
             ImGui.BeginDisabled(!canStart);
@@ -448,7 +601,8 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
         if (Service.Configuration.AtmaAutomation.AutoOpenWindow
             && !this.manager.IsRunning
             && !this.dungeonManager.IsRunning
-            && !this.fateManager.IsRunning)
+            && !this.fateManager.IsRunning
+            && !this.leveManager.IsRunning)
         {
             this.IsOpen = false;
         }

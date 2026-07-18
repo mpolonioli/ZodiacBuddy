@@ -207,7 +207,7 @@ internal struct BraveBook
                     var leveName = leve.Name.ToString();
 
                     var position = GetLevePosition(leveId);
-                    var issuerName = GetLeveIssuer(leveId);
+                    var issuerName = GetLeveIssuer(leveId, out var issuerId);
 
                     var zoneName = position.TerritoryType.Value.PlaceName.Value.Name.ToString();
                     var zoneId = position.TerritoryType.RowId;
@@ -221,6 +221,8 @@ internal struct BraveBook
                         ZoneId = zoneId,
                         LocationName = string.Empty,
                         Position = position,
+                        LeveId = leveId,
+                        IssuerId = issuerId,
                     };
                 }
             }
@@ -416,21 +418,24 @@ internal struct BraveBook
         };
     }
 
-    private static string GetLeveIssuer(uint leveId)
+    private static string GetLeveIssuer(uint leveId, out uint issuerId)
     {
-        var (gcId, issuerName) = leveId switch
+        var (gcId, npcId) = leveId switch
         {
-            643 or 644 or 645 or 646 or 647 => (0, Service.SeStringEvaluator.EvaluateObjStr(ObjectKind.EventNpc, 1002398)), // Rurubana
-            649 or 650 or 652 => (0, Service.SeStringEvaluator.EvaluateObjStr(ObjectKind.EventNpc, 1002401)), // Voilinaut
-            657 or 658 or 659 => (0, Service.SeStringEvaluator.EvaluateObjStr(ObjectKind.EventNpc, 1004348)), // K'leytai
-            848 or 849 => (1, Service.SeStringEvaluator.EvaluateObjStr(ObjectKind.EventNpc, 1007069)), // Lodille
-            853 or 855 => (2, Service.SeStringEvaluator.EvaluateObjStr(ObjectKind.EventNpc, 1007069)), // Lodille
-            859 or 860 => (3, Service.SeStringEvaluator.EvaluateObjStr(ObjectKind.EventNpc, 1007069)), // Lodille
-            863 or 865 => (1, Service.SeStringEvaluator.EvaluateObjStr(ObjectKind.EventNpc, 1007070)), // Eidhart
-            868 or 870 => (2, Service.SeStringEvaluator.EvaluateObjStr(ObjectKind.EventNpc, 1007070)), // Eidhart
-            875 or 873 => (3, Service.SeStringEvaluator.EvaluateObjStr(ObjectKind.EventNpc, 1007070)), // Eidhart
+            643 or 644 or 645 or 646 or 647 => (0, 1002398u), // Rurubana
+            649 or 650 or 652 => (0, 1002401u), // Voilinaut
+            657 or 658 or 659 => (0, 1004348u), // K'leytai
+            848 or 849 => (1, 1007069u), // Lodille
+            853 or 855 => (2, 1007069u), // Lodille
+            859 or 860 => (3, 1007069u), // Lodille
+            863 or 865 => (1, 1007070u), // Eidhart
+            868 or 870 => (2, 1007070u), // Eidhart
+            875 or 873 => (3, 1007070u), // Eidhart
             _ => throw new ArgumentException($"Unregistered leve: {leveId}"),
         };
+
+        issuerId = npcId;
+        var issuerName = Service.SeStringEvaluator.EvaluateObjStr(ObjectKind.EventNpc, npcId);
 
         if (gcId != 0 && Service.SeStringEvaluator.EvaluateFromAddon(826, [gcId]) is var gcName && !gcName.IsEmpty)
         {

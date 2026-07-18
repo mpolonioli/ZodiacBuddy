@@ -51,6 +51,17 @@ internal struct BraveTarget
     public uint FateId { get; init; }
 
     /// <summary>
+    ///     Gets the Leve row ID. Only set for leve targets.
+    /// </summary>
+    public uint LeveId { get; init; }
+
+    /// <summary>
+    ///     Gets the ENpc data ID of the levemete issuing the leve. Only set for
+    ///     leve targets.
+    /// </summary>
+    public uint IssuerId { get; init; }
+
+    /// <summary>
     ///     Gets the location name.
     /// </summary>
     public string LocationName { get; init; }

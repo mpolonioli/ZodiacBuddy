@@ -264,6 +264,17 @@ internal sealed class AtmaAutomationManager : IDisposable
     }
 
     /// <summary>
+    ///     Get whether a book leve slot has been completed.
+    /// </summary>
+    /// <param name="slot">Leve slot, 0 to 3.</param>
+    /// <returns>Whether the leve is complete; false when no book is active.</returns>
+    internal static unsafe bool IsLeveComplete(int slot)
+    {
+        var relicNote = RelicNote.Instance();
+        return relicNote != null && relicNote->IsLeveComplete(slot);
+    }
+
+    /// <summary>
     ///     Get the RelicNote row ID of the currently active book.
     /// </summary>
     /// <returns>The book ID, or 0 when no book is active.</returns>

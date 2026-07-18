@@ -271,9 +271,16 @@ internal sealed class BookTravelManager : IDisposable
             return;
         }
 
+        // A flying path can end hovering in place; land before checking the
+        // arrival so the dismount happens on the ground.
+        if (AtmaAutomationManager.LandIfHovering(this.navmesh, this.destination, "ZodiacBuddy.BookTravel.Land"))
+        {
+            return;
+        }
+
         if (Vector3.Distance(player.Position, this.destination) <= 5f && !this.navmesh.IsPathRunning)
         {
-            if (Service.Condition[ConditionFlag.InFlight] || Service.Condition[ConditionFlag.Mounted])
+            if (Service.Condition[ConditionFlag.Mounted])
             {
                 if (EzThrottler.Throttle("ZodiacBuddy.BookTravel.Dismount", 500))
                 {

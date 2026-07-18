@@ -628,13 +628,20 @@ internal sealed class LeveAutomationManager : IDisposable
             return;
         }
 
-        // Arrival. While flying, let the path descend to the ground first; the
-        // hand-in state dismounts and can't do that in mid-air.
+        // Arrival, only once back on the ground; the hand-in state dismounts
+        // and can't do that in mid-air.
         if (!Service.Condition[ConditionFlag.InFlight]
             && Vector3.Distance(player.Position, this.destination) <= 5f
             && !this.navmesh.IsPathRunning)
         {
             this.TransitionTo(LeveAutomationState.HandingIn);
+            return;
+        }
+
+        // A flying path ends hovering above the destination; land so the
+        // arrival check above can pass instead of tripping the stuck loop.
+        if (AtmaAutomationManager.LandIfHovering(this.navmesh, this.destination, "ZodiacBuddy.LeveAuto.Land"))
+        {
             return;
         }
 

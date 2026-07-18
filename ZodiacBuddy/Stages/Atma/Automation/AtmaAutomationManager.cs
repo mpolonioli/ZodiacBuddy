@@ -353,6 +353,54 @@ internal sealed class AtmaAutomationManager : IDisposable
         return CSGame.Control.Control.CanFly;
     }
 
+    /// <summary>
+    ///     Land after a flying path ended while still airborne. vnavmesh flies to
+    ///     within path tolerance of the ground destination but never switches out
+    ///     of flight, so InFlight stays set and arrival checks gated on it can
+    ///     never pass. Near the goal the only thing that lands is dismounting
+    ///     (a hop of at most a few yalms; a ground path completes instantly
+    ///     within tolerance without moving). Further out - a path ended early -
+    ///     a ground path drags the mount down and finishes the leg.
+    /// </summary>
+    /// <param name="navmesh">Navmesh IPC of the calling manager.</param>
+    /// <param name="goal">The travel goal to land at.</param>
+    /// <param name="throttleKey">Throttle key for the landing actions.</param>
+    /// <returns>Whether a landing is in progress and the caller should wait.</returns>
+    internal static bool LandIfHovering(NavmeshIpc navmesh, Vector3 goal, string throttleKey)
+    {
+        if (!Service.Condition[ConditionFlag.InFlight]
+            || navmesh.IsPathRunning
+            || navmesh.IsPathfindInProgress)
+        {
+            return false;
+        }
+
+        var player = Service.ObjectTable.LocalPlayer;
+        if (player is null)
+        {
+            return true;
+        }
+
+        if (Vector3.Distance(player.Position, goal) <= 5f)
+        {
+            if (EzThrottler.Throttle(throttleKey, 1000))
+            {
+                Service.PluginLog.Debug("[Automation] Flying path ended hovering at the destination; dismounting to land.");
+                TryUseGeneralAction(DismountActionId);
+            }
+
+            return true;
+        }
+
+        if (EzThrottler.Throttle(throttleKey, 2000))
+        {
+            Service.PluginLog.Debug("[Automation] Flying path ended airborne away from the destination; continuing on a ground path.");
+            navmesh.PathfindAndMoveTo(goal, false);
+        }
+
+        return true;
+    }
+
     private void OnUpdate(IFramework framework)
     {
         try
@@ -763,10 +811,17 @@ internal sealed class AtmaAutomationManager : IDisposable
             }
         }
 
+        // A flying path can end hovering in place; land before checking the
+        // arrival so the dismount happens on the ground.
+        if (LandIfHovering(this.navmesh, this.destination, "ZodiacBuddy.AtmaAuto.Land"))
+        {
+            return;
+        }
+
         if (Vector3.Distance(player.Position, this.destination) <= 5f && !this.navmesh.IsPathRunning)
         {
             // Get back on the ground before scanning and fighting.
-            if (Service.Condition[ConditionFlag.InFlight] || Service.Condition[ConditionFlag.Mounted])
+            if (Service.Condition[ConditionFlag.Mounted])
             {
                 if (EzThrottler.Throttle("ZodiacBuddy.AtmaAuto.Dismount", 500))
                 {

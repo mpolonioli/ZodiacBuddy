@@ -733,8 +733,8 @@ internal sealed class FateAutomationManager : IDisposable
             return;
         }
 
-        // Arrival. While flying, let the path descend to the ground first; the
-        // follow-up states dismount and can't do that in mid-air.
+        // Arrival, only once back on the ground; the follow-up states dismount
+        // and can't do that in mid-air.
         if (!Service.Condition[ConditionFlag.InFlight])
         {
             if (this.travelingToFate
@@ -755,6 +755,13 @@ internal sealed class FateAutomationManager : IDisposable
                 this.TransitionTo(FateAutomationState.WaitingForFate);
                 return;
             }
+        }
+
+        // A flying path ends hovering above the destination; land so the
+        // arrival checks above can pass instead of tripping the stuck loop.
+        if (AtmaAutomationManager.LandIfHovering(this.navmesh, this.travelGoal, "ZodiacBuddy.FateAuto.Land"))
+        {
+            return;
         }
 
         if (this.CheckStuck(player.Position, () =>
@@ -923,8 +930,9 @@ internal sealed class FateAutomationManager : IDisposable
         this.StatusDetail = $"Entering {fate.Name}...";
         var player = Service.ObjectTable.LocalPlayer!;
 
-        // While flying, let the path descend to the ground first; dismounting
-        // mid-air would drop the character into the FATE.
+        // Only count as inside once back on the ground (the landing step below
+        // gets us there); dismounting mid-air would drop the character into
+        // the FATE.
         if (IsInsideFateArea(fate, player.Position) && !Service.Condition[ConditionFlag.InFlight])
         {
             this.navmesh.Stop();
@@ -967,6 +975,14 @@ internal sealed class FateAutomationManager : IDisposable
             this.navmesh.Stop();
             this.stateAfterAggro = FateAutomationState.EnteringFate;
             this.TransitionTo(FateAutomationState.HandlingAggro);
+            return;
+        }
+
+        // A flying approach ends hovering at the FATE's edge; land so the
+        // inside-the-FATE check above can pass and the dismount happens on
+        // the ground.
+        if (AtmaAutomationManager.LandIfHovering(this.navmesh, fate.Position, "ZodiacBuddy.FateAuto.Land"))
+        {
             return;
         }
 

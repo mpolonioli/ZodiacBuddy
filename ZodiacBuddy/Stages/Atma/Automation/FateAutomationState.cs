@@ -26,6 +26,12 @@ internal enum FateAutomationState
     WaitingForNavmesh,
 
     /// <summary>
+    ///     During the initial reconnaissance sweep: checking whether the current
+    ///     FATE is already up in this zone before committing to wait for it.
+    /// </summary>
+    ScoutingCheck,
+
+    /// <summary>
     ///     Checking whether the current travel goal (spawn point or an active FATE)
     ///     can be reached from here, and how.
     /// </summary>

@@ -42,11 +42,13 @@ internal sealed class FateAutomationManager : IDisposable
     private readonly AdvancedUnstuck unstuck;
     private readonly BookTravelManager bookTravel;
     private readonly Dictionary<uint, DateTime> fateBlacklist = [];
+    private readonly HashSet<int> scoutedSlots = [];
     private System.Action? unstuckRecovery;
 
     private uint startedBookId;
     private BraveBook currentBook;
     private BraveTarget currentFate;
+    private bool scouting;
     private HashSet<uint> chainedFateIds = [];
     private Vector3 destination;
     private Vector3 travelGoal;
@@ -185,6 +187,7 @@ internal sealed class FateAutomationManager : IDisposable
 
         this.startedBookId = AtmaAutomationManager.GetActiveBookId();
         this.currentBook = BraveBook.GetValue(this.startedBookId);
+        this.scoutedSlots.Clear();
         this.LastError = string.Empty;
         Log($"Starting FATEs automation for {this.currentBook.Name}.");
         this.TransitionTo(FateAutomationState.SelectNextFate);
@@ -307,6 +310,7 @@ internal sealed class FateAutomationManager : IDisposable
             {
                 this.navmesh.Stop();
                 Log($"{this.currentFate.Name} complete!");
+                this.OnSlotCredited();
                 this.activeFateId = 0;
                 this.engagementKind = EngagementKind.None;
                 this.stateAfterAggro = FateAutomationState.SelectNextFate;
@@ -343,6 +347,9 @@ internal sealed class FateAutomationManager : IDisposable
                     break;
                 case FateAutomationState.WaitingForNavmesh:
                     this.HandleWaitingForNavmesh();
+                    break;
+                case FateAutomationState.ScoutingCheck:
+                    this.HandleScoutingCheck();
                     break;
                 case FateAutomationState.ProbingRoute:
                     this.HandleProbingRoute();
@@ -433,16 +440,34 @@ internal sealed class FateAutomationManager : IDisposable
         this.CurrentSlot = -1;
         this.activeFateId = 0;
         this.engagementKind = EngagementKind.None;
+
+        // Initial reconnaissance sweep: FATEs can take up to ~30 minutes to spawn,
+        // so before committing to that wait on any single one, visit each incomplete
+        // FATE once and complete whichever are already up. Only once every incomplete
+        // FATE has been scouted do we settle on the first one still remaining and fall
+        // back to the normal wait-for-spawn logic - by then another FATE may well have
+        // spawned and been cleared during the sweep.
+        var firstIncomplete = -1;
+        var nextToScout = -1;
         for (var i = 0; i < this.currentBook.Fates.Length; i++)
         {
-            if (!AtmaAutomationManager.IsFateComplete(i))
+            if (AtmaAutomationManager.IsFateComplete(i))
             {
-                this.CurrentSlot = i;
-                break;
+                continue;
+            }
+
+            if (firstIncomplete < 0)
+            {
+                firstIncomplete = i;
+            }
+
+            if (nextToScout < 0 && !this.scoutedSlots.Contains(i))
+            {
+                nextToScout = i;
             }
         }
 
-        if (this.CurrentSlot < 0)
+        if (firstIncomplete < 0)
         {
             this.Cleanup();
             this.State = FateAutomationState.Completed;
@@ -451,6 +476,8 @@ internal sealed class FateAutomationManager : IDisposable
             return;
         }
 
+        this.scouting = nextToScout >= 0;
+        this.CurrentSlot = this.scouting ? nextToScout : firstIncomplete;
         this.currentFate = this.currentBook.Fates[this.CurrentSlot];
         this.chainedFateIds = ComputeChainedFates(this.currentFate.FateId);
         if (this.chainedFateIds.Count > 0)
@@ -466,7 +493,9 @@ internal sealed class FateAutomationManager : IDisposable
         this.travelGoal = this.destination;
         this.travelingToFate = false;
 
-        Log($"Next FATE: {this.currentFate.Name} in {this.currentFate.ZoneName}.");
+        Log(this.scouting
+            ? $"Scouting {this.currentFate.Name} in {this.currentFate.ZoneName}."
+            : $"Next FATE: {this.currentFate.Name} in {this.currentFate.ZoneName}.");
 
         this.flyDisabledForLeg = false;
         this.aetheryteCandidates = AtmaManager.GetAetherytesByDistance(mapLink);
@@ -562,7 +591,9 @@ internal sealed class FateAutomationManager : IDisposable
 
         if (this.navmesh.IsReady)
         {
-            this.TransitionTo(FateAutomationState.ProbingRoute);
+            this.TransitionTo(this.scouting
+                ? FateAutomationState.ScoutingCheck
+                : FateAutomationState.ProbingRoute);
             return;
         }
 
@@ -570,6 +601,59 @@ internal sealed class FateAutomationManager : IDisposable
         {
             this.Fail("The navmesh did not become ready in time.");
         }
+    }
+
+    private void HandleScoutingCheck()
+    {
+        this.StatusDetail = $"Checking whether {this.currentFate.Name} is up...";
+
+        if (Service.Condition[ConditionFlag.InCombat])
+        {
+            this.navmesh.Stop();
+            this.stateAfterAggro = FateAutomationState.ScoutingCheck;
+            this.TransitionTo(FateAutomationState.HandlingAggro);
+            return;
+        }
+
+        // Let the FATE table finish populating after zoning in before deciding.
+        if (this.StateAge < TimeSpan.FromSeconds(3))
+        {
+            return;
+        }
+
+        // Already up: commit to it right away, just as the normal flow would. The
+        // scouting flag stays set so that if this attempt ends without credit the
+        // sweep resumes with the remaining FATEs instead of waiting here.
+        if (this.FindTargetFate() is { } fate)
+        {
+            this.EngageFate(fate, EngagementKind.Target);
+            return;
+        }
+
+        this.ScoutNext();
+    }
+
+    private void OnSlotCredited()
+    {
+        // A book FATE was just counted. If it finished during the settle phase
+        // (the reconnaissance sweep already over), the remaining FATEs may have
+        // spawned during the wait, so drop the scouted set to run a fresh sweep
+        // before settling again. Completions during the sweep itself keep their
+        // progress so the pass finishes checking the FATEs it hasn't reached yet.
+        if (!this.scouting)
+        {
+            this.scoutedSlots.Clear();
+        }
+    }
+
+    private void ScoutNext()
+    {
+        // Not up: note it as scouted and move on to the next FATE rather than
+        // sinking the usual long wait here. Force-spawning via chained or filler
+        // FATEs is left to the settle phase once every FATE has been checked.
+        Log($"{this.currentFate.Name} is not up right now; checking the next FATE.");
+        this.scoutedSlots.Add(this.CurrentSlot);
+        this.TransitionTo(FateAutomationState.SelectNextFate);
     }
 
     private void HandleProbingRoute()
@@ -812,6 +896,26 @@ internal sealed class FateAutomationManager : IDisposable
             this.navmesh.Stop();
             this.stateAfterAggro = FateAutomationState.WaitingForFate;
             this.TransitionTo(FateAutomationState.HandlingAggro);
+            return;
+        }
+
+        // Reached during the reconnaissance sweep only when an engaged FATE ended
+        // without credit and we walked back to its spawn point. Re-check whether it
+        // is up, and if not resume the sweep instead of waiting the full duration.
+        if (this.scouting)
+        {
+            if (this.StateAge < TimeSpan.FromSeconds(3))
+            {
+                return;
+            }
+
+            if (this.FindTargetFate() is { } scoutFate)
+            {
+                this.EngageFate(scoutFate, EngagementKind.Target);
+                return;
+            }
+
+            this.ScoutNext();
             return;
         }
 
@@ -1296,6 +1400,7 @@ internal sealed class FateAutomationManager : IDisposable
         if (AtmaAutomationManager.IsFateComplete(this.CurrentSlot))
         {
             Log($"{this.currentFate.Name} complete!");
+            this.OnSlotCredited();
             this.TransitionTo(FateAutomationState.SelectNextFate);
             return;
         }

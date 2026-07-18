@@ -2,6 +2,7 @@
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
+using ECommons.GameFunctions;
 using ECommons.Throttlers;
 using Lumina.Excel.Sheets;
 using System;
@@ -252,6 +253,17 @@ internal sealed class AtmaAutomationManager : IDisposable
     }
 
     /// <summary>
+    ///     Get whether a book FATE slot has been completed.
+    /// </summary>
+    /// <param name="slot">FATE slot, 0 to 2.</param>
+    /// <returns>Whether the FATE is complete; false when no book is active.</returns>
+    internal static unsafe bool IsFateComplete(int slot)
+    {
+        var relicNote = RelicNote.Instance();
+        return relicNote != null && relicNote->IsFateComplete(slot);
+    }
+
+    /// <summary>
     ///     Get the RelicNote row ID of the currently active book.
     /// </summary>
     /// <returns>The book ID, or 0 when no book is active.</returns>
@@ -274,7 +286,13 @@ internal sealed class AtmaAutomationManager : IDisposable
         return ((((mapCoord - 1.0f) * c / 41.0f * 2048.0f) - 1024.0f) / c) - offset;
     }
 
-    private static float GetAttackRange(IPlayerCharacter player, IBattleNpc mob)
+    /// <summary>
+    ///     Get the distance at which the player can attack a mob.
+    /// </summary>
+    /// <param name="player">The local player.</param>
+    /// <param name="mob">The mob to attack.</param>
+    /// <returns>The attack range in yalms.</returns>
+    internal static float GetAttackRange(IPlayerCharacter player, IBattleNpc mob)
     {
         var range = mob.HitboxRadius + player.HitboxRadius + ExtraMeleeRange;
 
@@ -628,7 +646,10 @@ internal sealed class AtmaAutomationManager : IDisposable
             // post-zoning action lockout eats into it.
             if ((wantFly || this.ShouldMount(player.Position)) && this.StateAge < TimeSpan.FromSeconds(10))
             {
-                if (EzThrottler.Throttle("ZodiacBuddy.AtmaAuto.Mount", 1000))
+                // The roulette action is a toggle; pressing it while already
+                // mounted would dismount instead.
+                if (!Service.Condition[ConditionFlag.Mounted]
+                    && EzThrottler.Throttle("ZodiacBuddy.AtmaAuto.Mount", 1000))
                 {
                     TryUseGeneralAction(MountRouletteActionId);
                 }
@@ -953,8 +974,12 @@ internal sealed class AtmaAutomationManager : IDisposable
         this.StatusDetail = "Fighting off attackers...";
         var player = Service.ObjectTable.LocalPlayer!;
 
+        // Friendly NPCs can also "target" the player; only hostiles count as attackers.
         var attacker = Service.ObjectTable.OfType<IBattleNpc>()
-            .Where(b => !b.IsDead && b.IsTargetable && b.TargetObjectId == player.GameObjectId)
+            .Where(b => !b.IsDead
+                        && b.IsTargetable
+                        && b.IsHostile()
+                        && b.TargetObjectId == player.GameObjectId)
             .OrderBy(b => Vector3.DistanceSquared(b.Position, player.Position))
             .FirstOrDefault();
 

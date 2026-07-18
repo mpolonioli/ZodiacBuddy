@@ -11,12 +11,14 @@ namespace ZodiacBuddy.Stages.Atma.Automation;
 
 /// <summary>
 ///     Status window of the Trial of the Braves automation, split into an Enemies
-///     tab (driven by this plugin) and a Dungeons tab (run through AutoDuty).
+///     tab (driven by this plugin), a Dungeons tab (run through AutoDuty) and a
+///     FATEs tab (driven by this plugin).
 /// </summary>
 internal sealed class AtmaAutomationWindow : Window, IDisposable
 {
     private readonly AtmaAutomationManager manager;
     private readonly DungeonAutomationManager dungeonManager;
+    private readonly FateAutomationManager fateManager;
 
     private bool navmeshInstalled;
     private bool wrathAvailable;
@@ -27,11 +29,13 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
     /// </summary>
     /// <param name="manager">The enemies automation manager driven by this window.</param>
     /// <param name="dungeonManager">The dungeons automation manager driven by this window.</param>
-    public AtmaAutomationWindow(AtmaAutomationManager manager, DungeonAutomationManager dungeonManager)
+    /// <param name="fateManager">The FATEs automation manager driven by this window.</param>
+    public AtmaAutomationWindow(AtmaAutomationManager manager, DungeonAutomationManager dungeonManager, FateAutomationManager fateManager)
         : base("Trial of the Braves Automation###ZodiacBuddyAtmaAutomation")
     {
         this.manager = manager;
         this.dungeonManager = dungeonManager;
+        this.fateManager = fateManager;
 
         this.RespectCloseHotkey = true;
         this.SizeCondition = ImGuiCond.FirstUseEver;
@@ -86,6 +90,12 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
         if (ImGui.BeginTabItem("Dungeons"))
         {
             this.DrawDungeonsTab(book);
+            ImGui.EndTabItem();
+        }
+
+        if (ImGui.BeginTabItem("FATEs"))
+        {
+            this.DrawFatesTab(book);
             ImGui.EndTabItem();
         }
 
@@ -181,6 +191,12 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
                 reason = "The enemies automation is running.";
             }
 
+            if (canStart && this.fateManager.IsRunning)
+            {
+                canStart = false;
+                reason = "The FATEs automation is running.";
+            }
+
             ImGui.BeginDisabled(!canStart);
             if (ImGui.Button("Start"))
             {
@@ -246,6 +262,117 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
         ImGui.EndTable();
     }
 
+    private void DrawFatesTab(BraveBook book)
+    {
+        DrawStatusLine("vnavmesh:", this.navmeshInstalled, "Installed", "Not installed");
+        DrawStatusLine("Wrath Combo:", this.wrathAvailable, "Ready", "Not available");
+        ImGui.Separator();
+
+        this.DrawFatesTable(book);
+
+        ImGui.Separator();
+        this.DrawFateControls();
+    }
+
+    private void DrawFatesTable(BraveBook book)
+    {
+        if (!ImGui.BeginTable("##AtmaAutomationFates", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+        {
+            return;
+        }
+
+        ImGui.TableSetupColumn("##Current", ImGuiTableColumnFlags.WidthFixed, 20f);
+        ImGui.TableSetupColumn("FATE");
+        ImGui.TableSetupColumn("Zone");
+        ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 90f);
+        ImGui.TableHeadersRow();
+
+        for (var i = 0; i < book.Fates.Length; i++)
+        {
+            var fate = book.Fates[i];
+            var complete = AtmaAutomationManager.IsFateComplete(i);
+
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            if (this.fateManager.IsRunning && this.fateManager.CurrentSlot == i)
+            {
+                ImGui.TextColored(ImGuiColors.DalamudYellow, ">");
+            }
+
+            ImGui.TableNextColumn();
+            ImGui.Text(fate.Name);
+            ImGui.TableNextColumn();
+            ImGui.Text(fate.ZoneName);
+            ImGui.TableNextColumn();
+            ImGui.TextColored(
+                complete ? ImGuiColors.HealerGreen : ImGuiColors.DalamudWhite,
+                complete ? "Complete" : "Incomplete");
+        }
+
+        ImGui.EndTable();
+    }
+
+    private void DrawFateControls()
+    {
+        if (this.fateManager.IsRunning)
+        {
+            if (ImGui.Button("Stop"))
+            {
+                this.fateManager.Stop("stopped by user.");
+            }
+        }
+        else
+        {
+            // All three automations drive the character; never run two at once.
+            var canStart = FateAutomationManager.CanStart(this.navmeshInstalled, this.wrathAvailable, out var reason);
+            if (canStart && this.manager.IsRunning)
+            {
+                canStart = false;
+                reason = "The enemies automation is running.";
+            }
+
+            if (canStart && this.dungeonManager.IsRunning)
+            {
+                canStart = false;
+                reason = "The dungeons automation is running.";
+            }
+
+            ImGui.BeginDisabled(!canStart);
+            if (ImGui.Button("Start"))
+            {
+                this.fateManager.Start();
+            }
+
+            ImGui.EndDisabled();
+            if (!canStart && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip(reason);
+            }
+        }
+
+        ImGui.SameLine();
+        ImGui.Text($"State: {this.fateManager.State}");
+
+        if (this.fateManager.StatusDetail.Length > 0)
+        {
+            ImGui.Text(this.fateManager.StatusDetail);
+        }
+
+        if (this.fateManager.LastError.Length > 0)
+        {
+            ImGui.TextColored(ImGuiColors.DalamudRed, this.fateManager.LastError);
+        }
+
+        if (!Service.Configuration.DisableTeleport)
+        {
+            return;
+        }
+
+        ImGui.TextColored(
+            ImGuiColors.DalamudGrey,
+            "Note: the automation teleports even though \"Disable Teleport\" is enabled.");
+    }
+
     private void DrawControls()
     {
         if (this.manager.IsRunning)
@@ -264,6 +391,12 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
             {
                 canStart = false;
                 reason = "The dungeons automation is running.";
+            }
+
+            if (canStart && this.fateManager.IsRunning)
+            {
+                canStart = false;
+                reason = "The FATEs automation is running.";
             }
 
             ImGui.BeginDisabled(!canStart);
@@ -312,7 +445,10 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
 
     private void OnBookClosed(AddonEvent type, AddonArgs args)
     {
-        if (Service.Configuration.AtmaAutomation.AutoOpenWindow && !this.manager.IsRunning && !this.dungeonManager.IsRunning)
+        if (Service.Configuration.AtmaAutomation.AutoOpenWindow
+            && !this.manager.IsRunning
+            && !this.dungeonManager.IsRunning
+            && !this.fateManager.IsRunning)
         {
             this.IsOpen = false;
         }

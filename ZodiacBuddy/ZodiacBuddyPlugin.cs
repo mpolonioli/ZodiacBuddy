@@ -25,6 +25,7 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
     private readonly AtmaManager animusBuddy;
     private readonly AtmaAutomationManager atmaAutomationManager;
     private readonly DungeonAutomationManager dungeonAutomationManager;
+    private readonly FateAutomationManager fateAutomationManager;
     private readonly AtmaAutomationWindow atmaAutomationWindow;
     private readonly BookTravelManager bookTravelManager;
     private readonly BraveManager braveManager;
@@ -51,10 +52,11 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
         bookTravelManager = new BookTravelManager(advancedUnstuck);
         atmaAutomationManager = new AtmaAutomationManager(advancedUnstuck, bookTravelManager);
         dungeonAutomationManager = new DungeonAutomationManager(bookTravelManager);
+        fateAutomationManager = new FateAutomationManager(advancedUnstuck, bookTravelManager);
 
         windowSystem = new WindowSystem("ZodiacBuddy");
         windowSystem.AddWindow(configWindow = new ConfigWindow());
-        windowSystem.AddWindow(atmaAutomationWindow = new AtmaAutomationWindow(atmaAutomationManager, dungeonAutomationManager));
+        windowSystem.AddWindow(atmaAutomationWindow = new AtmaAutomationWindow(atmaAutomationManager, dungeonAutomationManager, fateAutomationManager));
 
         Service.Interface.UiBuilder.OpenConfigUi += OnOpenConfigUi;
         Service.Interface.UiBuilder.Draw += windowSystem.Draw;
@@ -82,6 +84,7 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
 
         animusBuddy.Dispose();
         atmaAutomationWindow.Dispose();
+        fateAutomationManager.Dispose();
         dungeonAutomationManager.Dispose();
         atmaAutomationManager.Dispose();
         bookTravelManager.Dispose();

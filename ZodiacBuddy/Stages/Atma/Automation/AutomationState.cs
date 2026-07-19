@@ -46,6 +46,11 @@ internal enum AutomationState
     MovingToEnemy,
 
     /// <summary>
+    ///     Level syncing to the FATE a target enemy belongs to, so it can be damaged.
+    /// </summary>
+    SyncingLevel,
+
+    /// <summary>
     ///     Fighting the current enemy until the kill is counted.
     /// </summary>
     Fighting,

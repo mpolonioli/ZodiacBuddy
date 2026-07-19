@@ -482,6 +482,7 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
                 && this.State is AutomationState.NavigatingToArea
                     or AutomationState.Scanning
                     or AutomationState.MovingToEnemy
+                    or AutomationState.SyncingLevel
                     or AutomationState.Fighting
                 && GetMonsterProgress(this.CurrentSlot) >= this.currentEnemy.RequiredKills)
             {
@@ -514,6 +515,9 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
                     break;
                 case AutomationState.MovingToEnemy:
                     this.HandleMovingToEnemy();
+                    break;
+                case AutomationState.SyncingLevel:
+                    this.HandleSyncingLevel();
                     break;
                 case AutomationState.Fighting:
                     this.HandleFighting();
@@ -983,7 +987,9 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
                 return;
             }
 
-            this.TransitionTo(AutomationState.Fighting);
+            // A target enemy that is part of a FATE takes almost no damage until we
+            // are level synced to that FATE; sync before fighting when needed.
+            this.TransitionTo(AutomationState.SyncingLevel);
             return;
         }
 
@@ -1016,6 +1022,63 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
         {
             this.Blacklist(mob.GameObjectId);
             this.TransitionTo(AutomationState.Scanning);
+        }
+    }
+
+    private void HandleSyncingLevel()
+    {
+        var player = Service.ObjectTable.LocalPlayer!;
+
+        var mob = this.GetCurrentMob();
+        if (mob is null)
+        {
+            this.TransitionTo(AutomationState.Scanning);
+            return;
+        }
+
+        var fateId = FateGameActions.GetObjectFateId(mob);
+        var fate = fateId == 0 ? null : Service.Fates.FirstOrDefault(f => f.FateId == fateId);
+
+        // Not a FATE enemy, already at/under the FATE's level, or already synced:
+        // nothing to sync, go straight to fighting.
+        if (fate is null || player.Level <= fate.MaxLevel || FateGameActions.IsSyncedTo(fateId))
+        {
+            this.TransitionTo(AutomationState.Fighting);
+            return;
+        }
+
+        this.StatusDetail = $"Applying level sync for \"{fate.Name}\"...";
+
+        // Level sync only applies while the game considers us inside the FATE.
+        // Being in attack range of a FATE enemy usually puts us inside, but an
+        // enemy near the boundary can leave us just outside; close in on the FATE.
+        if (!FateGameActions.IsInsideFate(fateId))
+        {
+            if (!this.navmesh.IsPathRunning && !this.navmesh.IsPathfindInProgress
+                && EzThrottler.Throttle("ZodiacBuddy.AtmaAuto.FateApproach", 1000))
+            {
+                this.navmesh.PathfindAndMoveCloseTo(fate.Position, Math.Max(fate.Radius - 5f, 5f));
+            }
+
+            if (this.StateAge > TimeSpan.FromSeconds(20))
+            {
+                Service.PluginLog.Warning("[Automation] Could not get inside the FATE to level sync; fighting anyway.");
+                this.TransitionTo(AutomationState.Fighting);
+            }
+
+            return;
+        }
+
+        this.navmesh.Stop();
+        if (EzThrottler.Throttle("ZodiacBuddy.AtmaAuto.LevelSync", 1000))
+        {
+            FateGameActions.LevelSync();
+        }
+
+        if (this.StateAge > TimeSpan.FromSeconds(20))
+        {
+            Service.PluginLog.Warning("[Automation] Could not apply level sync; fighting anyway.");
+            this.TransitionTo(AutomationState.Fighting);
         }
     }
 

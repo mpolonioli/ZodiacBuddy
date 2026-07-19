@@ -1193,6 +1193,9 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
             Service.TargetManager.Target = null;
         }
 
+        // Only arm the combat plugin while a fight is in progress; BossMod's
+        // dodge movement must not interfere with travel or teleport casts.
+        this.combat.SetCombatActive(state is AutomationState.Fighting or AutomationState.HandlingAggro);
         this.State = state;
         this.stateEnteredAt = DateTime.UtcNow;
         this.stateEntered = false;

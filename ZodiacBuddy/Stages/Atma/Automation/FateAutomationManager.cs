@@ -697,12 +697,14 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
 
         if (player.IsDead || Service.Condition[ConditionFlag.Unconscious])
         {
-            // Accept the "Return to the aetheryte?" prompt (or a raise, should
-            // a passerby offer one) as soon as it comes up.
-            this.StatusDetail = "Accepting the return to the aetheryte...";
-            if (EzThrottler.Throttle("ZodiacBuddy.FateAuto.ReturnConfirm", 1000))
+            // Confirm the return through the revive agent directly (the way the
+            // bundleoftweaks grinder does) instead of clicking the dialog; the
+            // agent only accepts it once the game reports us revivable.
+            this.StatusDetail = "Returning to the aetheryte...";
+            if (FateGameActions.IsRevivable()
+                && EzThrottler.Throttle("ZodiacBuddy.FateAuto.ReturnConfirm", 2000))
             {
-                FateGameActions.ConfirmYesNo();
+                FateGameActions.ReturnToAetheryte();
             }
 
             if (this.StateAge > TimeSpan.FromSeconds(120))
@@ -1267,6 +1269,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         var player = Service.ObjectTable.LocalPlayer!;
         var isCollect = IsCollectFate(this.activeFateId);
         this.StatusDetail = $"Fighting in {fate.Name} ({fate.Progress}%).";
+        this.combat.TickObstacleMap();
 
         // A gather cast (collectables) or other interaction is running; let it finish.
         if (Service.Condition[ConditionFlag.OccupiedInQuestEvent] || Service.Condition[ConditionFlag.Casting])
@@ -1654,6 +1657,14 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         };
         Log($"Engaging {label} \"{fate.Name}\" ({fate.State}, {fate.Progress}%).");
 
+        // Give BossMod an obstacle map of the FATE area so its dodge movement can
+        // path around terrain; generation is asynchronous and usually done by the
+        // time the fight starts. The center can be unreachable (a tower FATE), so
+        // generate from the nearest navigable point and widen by the offset.
+        var mapCenter = this.navmesh.FindNavigablePoint(fate.Position) ?? fate.Position;
+        var mapMargin = Vector3.Distance(mapCenter, fate.Position);
+        this.combat.PrepareFateObstacleMap(fate.FateId, mapCenter, fate.Radius + Math.Max(mapMargin, 10f));
+
         // FATEs can be far apart; go through the full probe/travel machinery
         // (mount, fly, ground fallback) to get there, then start or enter it.
         this.travelGoal = fate.Position;
@@ -1704,12 +1715,15 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
     private void TransitionTo(FateAutomationState state)
     {
         // The combat plugin attacks our hard target even out of combat, so drop
-        // the target when heading anywhere that isn't a fight to avoid unwanted pulls.
-        if (state is not (FateAutomationState.Fighting or FateAutomationState.HandlingAggro))
+        // the target when heading anywhere that isn't a fight to avoid unwanted
+        // pulls, and only arm it while a fight is in progress.
+        var fighting = state is FateAutomationState.Fighting or FateAutomationState.HandlingAggro;
+        if (!fighting)
         {
             Service.TargetManager.Target = null;
         }
 
+        this.combat.SetCombatActive(fighting);
         this.State = state;
         this.stateEnteredAt = DateTime.UtcNow;
         this.stateEntered = false;

@@ -1,5 +1,6 @@
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
+using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using FFXIVClientStructs.FFXIV.Client.Game.Event;
 using FFXIVClientStructs.FFXIV.Client.Game.Fate;
@@ -105,6 +106,21 @@ internal static unsafe class FateGameActions
     /// </summary>
     public static void LevelSync()
         => FateManager.Instance()->LevelSync();
+
+    /// <summary>
+    ///     Check whether the dead player can revive right now (the game shows the
+    ///     return prompt once this is set).
+    /// </summary>
+    /// <returns>Whether a revive can be confirmed.</returns>
+    public static bool IsRevivable()
+        => AgentRevive.Instance()->ReviveState != 0;
+
+    /// <summary>
+    ///     Confirm the return to the home/aetheryte after dying, without going
+    ///     through the dialog (ExecuteCommand 200/8, the revive agent's Return op).
+    /// </summary>
+    public static void ReturnToAetheryte()
+        => GameMain.ExecuteCommand(200, 8);
 
     /// <summary>
     ///     Check whether an addon is visible and ready for input.

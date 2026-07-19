@@ -1,4 +1,5 @@
 using System;
+using System.Numerics;
 
 namespace ZodiacBuddy.Stages.Atma.Automation;
 
@@ -94,6 +95,47 @@ internal sealed class CombatIpc : IDisposable
         }
 
         return acquired;
+    }
+
+    /// <summary>
+    ///     Tell the combat plugin whether a fight is in progress. Wrath Combo is
+    ///     armed for the whole run (it never moves the character), while BossMod's
+    ///     preset is only active during fights so its movement cannot interfere
+    ///     with travel or teleport casts.
+    /// </summary>
+    /// <param name="active">Whether a fight is in progress.</param>
+    public void SetCombatActive(bool active)
+    {
+        if (this.controlled == CombatPlugin.BossMod)
+        {
+            this.bossMod.SetCombatActive(active);
+        }
+    }
+
+    /// <summary>
+    ///     Start generating a BossMod obstacle map for a FATE area, so its dodge
+    ///     movement can path around open-world terrain. No-op under Wrath Combo.
+    /// </summary>
+    /// <param name="fateId">Fate row ID.</param>
+    /// <param name="center">A reachable point near the FATE's center.</param>
+    /// <param name="radius">Radius to cover.</param>
+    public void PrepareFateObstacleMap(uint fateId, Vector3 center, float radius)
+    {
+        if (this.controlled == CombatPlugin.BossMod)
+        {
+            this.bossMod.PrepareFateObstacleMap(fateId, center, radius);
+        }
+    }
+
+    /// <summary>
+    ///     Poll a pending obstacle map generation. No-op under Wrath Combo.
+    /// </summary>
+    public void TickObstacleMap()
+    {
+        if (this.controlled == CombatPlugin.BossMod)
+        {
+            this.bossMod.TickObstacleMap();
+        }
     }
 
     /// <summary>

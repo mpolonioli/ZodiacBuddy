@@ -912,13 +912,16 @@ internal sealed class LeveAutomationManager : IDisposable, IBookAutomation
 
     private void TransitionTo(LeveAutomationState state)
     {
-        // Wrath is configured to attack our hard target even out of combat, so drop
-        // the target when heading anywhere that isn't a fight to avoid unwanted pulls.
-        if (state is not LeveAutomationState.HandlingAggro)
+        // The combat plugin attacks our hard target even out of combat, so drop
+        // the target when heading anywhere that isn't a fight to avoid unwanted
+        // pulls, and only arm it while a fight is in progress.
+        var fighting = state is LeveAutomationState.HandlingAggro;
+        if (!fighting)
         {
             Service.TargetManager.Target = null;
         }
 
+        this.combat.SetCombatActive(fighting);
         this.State = state;
         this.stateEnteredAt = DateTime.UtcNow;
         this.stateEntered = false;

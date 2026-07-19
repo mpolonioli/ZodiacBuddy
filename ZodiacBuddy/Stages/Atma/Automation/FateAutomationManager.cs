@@ -975,12 +975,16 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         var npc = FateGameActions.GetMotivationNpc(this.activeFateId);
         if (npc is null)
         {
-            // The NPC is not in object table range yet; get closer to the FATE.
+            // The NPC has not resolved yet; walk right up to the FATE centre where
+            // the start NPC stands. Arriving anywhere inside the (large) FATE radius
+            // is not enough - park too far out and the NPC never loads into interact
+            // range and we sit here until the timeout - so close the last stretch on
+            // foot until it appears and the branch below can approach it precisely.
             this.StatusDetail = $"Looking for the NPC that starts {fate.Name}...";
             if (!this.navmesh.IsPathRunning && !this.navmesh.IsPathfindInProgress
                 && EzThrottler.Throttle("ZodiacBuddy.FateAuto.NpcApproach", 2000))
             {
-                this.navmesh.PathfindAndMoveCloseTo(fate.Position, 30f);
+                this.navmesh.PathfindAndMoveCloseTo(fate.Position, 4f);
             }
         }
         else if (!FateGameActions.IsInInteractRange(npc))

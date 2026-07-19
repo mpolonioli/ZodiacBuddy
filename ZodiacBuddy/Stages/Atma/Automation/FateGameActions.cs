@@ -48,9 +48,14 @@ internal static unsafe class FateGameActions
             return null;
         }
 
-        // Freshly spawned NPCs briefly appear as garbage objects of another kind.
+        // The NPC you talk to in order to start a FATE is usually an EventNpc
+        // (e.g. Tower of Power), though some FATEs use a BattleNpc; accept either.
+        // Freshly spawned NPCs briefly appear as garbage objects of another kind,
+        // so require the settled kind and targetability before committing to one.
         return Service.ObjectTable.FirstOrDefault(
-            o => o.EntityId == entityId && o.ObjectKind == ObjectKind.BattleNpc && o.IsTargetable);
+            o => o.EntityId == entityId
+                 && o.ObjectKind is ObjectKind.EventNpc or ObjectKind.BattleNpc
+                 && o.IsTargetable);
     }
 
     /// <summary>

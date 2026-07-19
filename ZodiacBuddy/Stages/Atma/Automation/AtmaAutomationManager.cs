@@ -20,7 +20,7 @@ namespace ZodiacBuddy.Stages.Atma.Automation;
 /// <summary>
 ///     Automates the "Enemies" step of the Trial of the Braves books: teleports to
 ///     each incomplete enemy, navigates to its area with vnavmesh, scans for it and
-///     lets Wrath Combo kill it until the book page is complete.
+///     lets the configured combat plugin kill it until the book page is complete.
 /// </summary>
 internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
 {
@@ -44,7 +44,7 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
     private static readonly Dictionary<string, DateTime> HoverLandingStartedAt = [];
 
     private readonly NavmeshIpc navmesh;
-    private readonly WrathComboIpc wrath;
+    private readonly CombatIpc combat;
     private readonly AdvancedUnstuck unstuck;
     private readonly BookTravelManager bookTravel;
     private readonly Dictionary<ulong, DateTime> blacklist = [];
@@ -89,10 +89,10 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
     public AtmaAutomationManager(AdvancedUnstuck unstuck, BookTravelManager bookTravel)
     {
         this.navmesh = new NavmeshIpc();
-        this.wrath = new WrathComboIpc();
+        this.combat = new CombatIpc();
         this.unstuck = unstuck;
         this.bookTravel = bookTravel;
-        this.wrath.LeaseCancelled += this.OnLeaseCancelled;
+        this.combat.ControlLost += this.OnControlLost;
         Service.Framework.Update += this.OnUpdate;
     }
 
@@ -132,17 +132,17 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
     /// <param name="reason">The reason it cannot be started.</param>
     /// <returns>Whether the automation can be started.</returns>
     public static bool CanStart(out string reason)
-        => CanStart(NavmeshIpc.IsInstalled, WrathComboIpc.IsAvailable(), out reason);
+        => CanStart(NavmeshIpc.IsInstalled, CombatIpc.IsAvailable(), out reason);
 
     /// <summary>
     ///     Check whether the automation can be started right now, using already known
     ///     dependency statuses to avoid IPC calls.
     /// </summary>
     /// <param name="navmeshInstalled">Whether vnavmesh is installed.</param>
-    /// <param name="wrathAvailable">Whether Wrath Combo is available.</param>
+    /// <param name="combatAvailable">Whether the configured combat plugin is available.</param>
     /// <param name="reason">The reason it cannot be started.</param>
     /// <returns>Whether the automation can be started.</returns>
-    internal static unsafe bool CanStart(bool navmeshInstalled, bool wrathAvailable, out string reason)
+    internal static unsafe bool CanStart(bool navmeshInstalled, bool combatAvailable, out string reason)
     {
         if (!Service.ClientState.IsLoggedIn)
         {
@@ -178,9 +178,9 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
             return false;
         }
 
-        if (!wrathAvailable)
+        if (!combatAvailable)
         {
-            reason = "The Wrath Combo plugin is not installed or not ready.";
+            reason = $"The {CombatIpc.ConfiguredName} plugin is not installed or not ready.";
             return false;
         }
 
@@ -205,9 +205,9 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
             return;
         }
 
-        if (!this.wrath.BeginControl())
+        if (!this.combat.BeginControl())
         {
-            this.LastError = "Could not take control of Wrath Combo.";
+            this.LastError = $"Could not take control of {CombatIpc.ConfiguredName}.";
             Service.PluginLog.Warning($"[Automation] {this.LastError}");
             return;
         }
@@ -239,9 +239,9 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
     public void Dispose()
     {
         Service.Framework.Update -= this.OnUpdate;
-        this.wrath.LeaseCancelled -= this.OnLeaseCancelled;
+        this.combat.ControlLost -= this.OnControlLost;
         this.Cleanup();
-        this.wrath.Dispose();
+        this.combat.Dispose();
     }
 
     /// <summary>
@@ -564,9 +564,9 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
             return false;
         }
 
-        if (!this.wrath.HasLease)
+        if (!this.combat.HasControl)
         {
-            this.Fail("The Wrath Combo lease was revoked.");
+            this.Fail($"Control of {this.combat.ControlledName} was revoked.");
             return false;
         }
 
@@ -1104,7 +1104,7 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
             return;
         }
 
-        // Keep the mob hard-targeted so Wrath attacks it.
+        // Keep the mob hard-targeted so the combat plugin attacks it.
         if (Service.TargetManager.Target?.GameObjectId != mob.GameObjectId)
         {
             Service.TargetManager.Target = mob;
@@ -1182,7 +1182,7 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
 
     private void TransitionTo(AutomationState state)
     {
-        // Wrath is configured to attack our hard target even out of combat, so drop
+        // The combat plugin attacks our hard target even out of combat, so drop
         // the target when heading anywhere that isn't a fight to avoid unwanted pulls.
         if (state is AutomationState.SelectNextEnemy
             or AutomationState.Teleporting
@@ -1258,14 +1258,14 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
         this.navmesh.Stop();
         this.unstuck.Stop();
         this.unstuckRecovery = null;
-        this.wrath.EndControl();
+        this.combat.EndControl();
     }
 
-    private void OnLeaseCancelled()
+    private void OnControlLost()
     {
         if (this.IsRunning)
         {
-            this.Fail("The Wrath Combo lease was revoked.");
+            this.Fail($"Control of {this.combat.ControlledName} was revoked.");
         }
     }
 

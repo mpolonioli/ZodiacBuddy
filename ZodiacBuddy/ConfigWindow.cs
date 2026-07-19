@@ -274,7 +274,8 @@ internal class ConfigWindow : Window
         if (ImGui.IsItemHovered())
         {
             ImGui.SetTooltip("Automates the Enemies page of the current book.\n" +
-                             "Requires the vnavmesh and Wrath Combo plugins.\n" +
+                             "Requires the vnavmesh plugin and a combat plugin\n" +
+                             "(BossMod or Wrath Combo, selectable in the window).\n" +
                              "Note: teleports even when \"Disable Teleport\" is enabled.");
         }
 

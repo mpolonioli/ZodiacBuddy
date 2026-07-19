@@ -20,8 +20,10 @@ namespace ZodiacBuddy.Stages.Atma.Automation;
 ///     Automates the "FATEs" step of the Trial of the Braves books: teleports to
 ///     each incomplete FATE's spawn point, waits for it to appear (clearing chained
 ///     prerequisite FATEs to force-spawn it when possible), starts it by talking to
-///     its NPC when needed, level syncs, and fights level-synced with Wrath Combo
-///     until the book counts it. Collect FATEs are handed in automatically.
+///     its NPC when needed, level syncs, and fights level-synced with the configured
+///     combat plugin until the book counts it. Collect FATEs are handed in
+///     automatically. Deaths are recovered from by returning to the aetheryte,
+///     waiting out Weakness and resuming with the next incomplete FATE.
 /// </summary>
 internal sealed class FateAutomationManager : IDisposable, IBookAutomation
 {
@@ -37,8 +39,15 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
     // slot, then come back and wait again.
     private const int FillerWaitSeconds = 60;
 
+    // Dying this often without completing a single FATE in between means the
+    // fights are not winnable; stop instead of looping through death forever.
+    private const int MaxDeathsPerFate = 5;
+
+    private const uint WeaknessStatusId = 43;
+    private const uint BrinkOfDeathStatusId = 44;
+
     private readonly NavmeshIpc navmesh;
-    private readonly WrathComboIpc wrath;
+    private readonly CombatIpc combat;
     private readonly AdvancedUnstuck unstuck;
     private readonly BookTravelManager bookTravel;
     private readonly Dictionary<uint, DateTime> fateBlacklist = [];
@@ -77,6 +86,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
     private bool sawZoning;
     private int repathAttempts;
     private DateTime lastWaitNoticeAt;
+    private int deathCount;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="FateAutomationManager" /> class.
@@ -86,10 +96,10 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
     public FateAutomationManager(AdvancedUnstuck unstuck, BookTravelManager bookTravel)
     {
         this.navmesh = new NavmeshIpc();
-        this.wrath = new WrathComboIpc();
+        this.combat = new CombatIpc();
         this.unstuck = unstuck;
         this.bookTravel = bookTravel;
-        this.wrath.LeaseCancelled += this.OnLeaseCancelled;
+        this.combat.ControlLost += this.OnControlLost;
         Service.Framework.Update += this.OnUpdate;
     }
 
@@ -149,18 +159,18 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
     /// <param name="reason">The reason it cannot be started.</param>
     /// <returns>Whether the automation can be started.</returns>
     public static bool CanStart(out string reason)
-        => CanStart(NavmeshIpc.IsInstalled, WrathComboIpc.IsAvailable(), out reason);
+        => CanStart(NavmeshIpc.IsInstalled, CombatIpc.IsAvailable(), out reason);
 
     /// <summary>
     ///     Check whether the automation can be started right now, using already known
     ///     dependency statuses to avoid IPC calls.
     /// </summary>
     /// <param name="navmeshInstalled">Whether vnavmesh is installed.</param>
-    /// <param name="wrathAvailable">Whether Wrath Combo is available.</param>
+    /// <param name="combatAvailable">Whether the configured combat plugin is available.</param>
     /// <param name="reason">The reason it cannot be started.</param>
     /// <returns>Whether the automation can be started.</returns>
-    internal static bool CanStart(bool navmeshInstalled, bool wrathAvailable, out string reason)
-        => AtmaAutomationManager.CanStart(navmeshInstalled, wrathAvailable, out reason);
+    internal static bool CanStart(bool navmeshInstalled, bool combatAvailable, out string reason)
+        => AtmaAutomationManager.CanStart(navmeshInstalled, combatAvailable, out reason);
 
     /// <summary>
     ///     Start working through the FATEs of the current book.
@@ -179,9 +189,9 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
             return;
         }
 
-        if (!this.wrath.BeginControl())
+        if (!this.combat.BeginControl())
         {
-            this.LastError = "Could not take control of Wrath Combo.";
+            this.LastError = $"Could not take control of {CombatIpc.ConfiguredName}.";
             Service.PluginLog.Warning($"[FateAutomation] {this.LastError}");
             return;
         }
@@ -191,6 +201,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         this.startedBookId = AtmaAutomationManager.GetActiveBookId();
         this.currentBook = BraveBook.GetValue(this.startedBookId);
         this.scoutedSlots.Clear();
+        this.deathCount = 0;
         this.LastError = string.Empty;
         Log($"Starting FATEs automation for {this.currentBook.Name}.");
         this.TransitionTo(FateAutomationState.SelectNextFate);
@@ -215,9 +226,9 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
     public void Dispose()
     {
         Service.Framework.Update -= this.OnUpdate;
-        this.wrath.LeaseCancelled -= this.OnLeaseCancelled;
+        this.combat.ControlLost -= this.OnControlLost;
         this.Cleanup();
-        this.wrath.Dispose();
+        this.combat.Dispose();
     }
 
     private static void Log(string message)
@@ -384,6 +395,9 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
                 case FateAutomationState.HandlingAggro:
                     this.HandleAggro();
                     break;
+                case FateAutomationState.Recovering:
+                    this.HandleRecovering();
+                    break;
             }
         }
         catch (Exception ex)
@@ -419,13 +433,19 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
 
         if (player.IsDead || Service.Condition[ConditionFlag.Unconscious])
         {
-            this.Fail("You died. Automation stopped.");
-            return false;
+            // Deaths are recoverable: accept the return to the aetheryte and
+            // resume from there instead of stopping the whole run.
+            if (this.State != FateAutomationState.Recovering)
+            {
+                this.OnDeath();
+            }
+
+            return this.State == FateAutomationState.Recovering;
         }
 
-        if (!this.wrath.HasLease)
+        if (!this.combat.HasControl)
         {
-            this.Fail("The Wrath Combo lease was revoked.");
+            this.Fail($"Control of {this.combat.ControlledName} was revoked.");
             return false;
         }
 
@@ -638,6 +658,9 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
 
     private void OnSlotCredited()
     {
+        // Progress means the fights are winnable; deaths start counting afresh.
+        this.deathCount = 0;
+
         // A book FATE was just counted. If it finished during the settle phase
         // (the reconnaissance sweep already over), the remaining FATEs may have
         // spawned during the wait, so drop the scouted set to run a fresh sweep
@@ -647,6 +670,75 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         {
             this.scoutedSlots.Clear();
         }
+    }
+
+    private void OnDeath()
+    {
+        this.navmesh.Stop();
+        this.unstuck.Stop();
+        this.unstuckRecovery = null;
+        Service.TargetManager.Target = null;
+        this.activeFateId = 0;
+        this.engagementKind = EngagementKind.None;
+
+        if (++this.deathCount >= MaxDeathsPerFate)
+        {
+            this.Fail($"Died {this.deathCount} times without completing a FATE; stopping to avoid a death loop.");
+            return;
+        }
+
+        Log($"Died (death {this.deathCount}); returning to the aetheryte and resuming.");
+        this.TransitionTo(FateAutomationState.Recovering);
+    }
+
+    private void HandleRecovering()
+    {
+        var player = Service.ObjectTable.LocalPlayer!;
+
+        if (player.IsDead || Service.Condition[ConditionFlag.Unconscious])
+        {
+            // Accept the "Return to the aetheryte?" prompt (or a raise, should
+            // a passerby offer one) as soon as it comes up.
+            this.StatusDetail = "Accepting the return to the aetheryte...";
+            if (EzThrottler.Throttle("ZodiacBuddy.FateAuto.ReturnConfirm", 1000))
+            {
+                FateGameActions.ConfirmYesNo();
+            }
+
+            if (this.StateAge > TimeSpan.FromSeconds(120))
+            {
+                this.Fail("Could not return to the aetheryte after dying.");
+            }
+
+            return;
+        }
+
+        // Back on our feet; fight off anything that is still on us.
+        if (Service.Condition[ConditionFlag.InCombat])
+        {
+            this.stateAfterAggro = FateAutomationState.Recovering;
+            this.TransitionTo(FateAutomationState.HandlingAggro);
+            return;
+        }
+
+        // Re-entering a hard FATE with the Weakness stat malus tends to end in
+        // another death; wait for it to wear off before resuming.
+        var weakness = player.StatusList.FirstOrDefault(
+            s => s.StatusId is WeaknessStatusId or BrinkOfDeathStatusId);
+        if (weakness is not null)
+        {
+            var name = weakness.StatusId == BrinkOfDeathStatusId ? "Brink of Death" : "Weakness";
+            this.StatusDetail = $"Waiting for {name} to wear off ({weakness.RemainingTime:0}s)...";
+
+            // Statuses expire on their own; this is only a safety net.
+            if (this.StateAge < TimeSpan.FromMinutes(12))
+            {
+                return;
+            }
+        }
+
+        Log("Recovered; resuming the FATE automation.");
+        this.TransitionTo(FateAutomationState.SelectNextFate);
     }
 
     private void ScoutNext()
@@ -1252,7 +1344,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
 
     private void FightMob(Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player, IBattleNpc mob)
     {
-        // Keep the mob hard-targeted so Wrath attacks it.
+        // Keep the mob hard-targeted so the combat plugin attacks it.
         if (Service.TargetManager.Target?.GameObjectId != mob.GameObjectId)
         {
             Service.TargetManager.Target = mob;
@@ -1611,7 +1703,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
 
     private void TransitionTo(FateAutomationState state)
     {
-        // Wrath is configured to attack our hard target even out of combat, so drop
+        // The combat plugin attacks our hard target even out of combat, so drop
         // the target when heading anywhere that isn't a fight to avoid unwanted pulls.
         if (state is not (FateAutomationState.Fighting or FateAutomationState.HandlingAggro))
         {
@@ -1738,14 +1830,14 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         this.navmesh.Stop();
         this.unstuck.Stop();
         this.unstuckRecovery = null;
-        this.wrath.EndControl();
+        this.combat.EndControl();
     }
 
-    private void OnLeaseCancelled()
+    private void OnControlLost()
     {
         if (this.IsRunning)
         {
-            this.Fail("The Wrath Combo lease was revoked.");
+            this.Fail($"Control of {this.combat.ControlledName} was revoked.");
         }
     }
 

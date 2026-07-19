@@ -12,6 +12,12 @@ public class AtmaAutomationConfiguration
     public bool AutoOpenWindow { get; set; } = true;
 
     /// <summary>
+    ///     Gets or sets the combat plugin the automations fight with. BossMod also
+    ///     dodges AoEs, which Wrath Combo does not.
+    /// </summary>
+    public CombatPlugin CombatPlugin { get; set; } = CombatPlugin.BossMod;
+
+    /// <summary>
     ///     Gets or sets a value indicating whether to use the mount roulette for longer travels.
     /// </summary>
     public bool UseMount { get; set; } = true;

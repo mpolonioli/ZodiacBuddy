@@ -22,7 +22,7 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
     private readonly LeveAutomationManager leveManager;
 
     private bool navmeshInstalled;
-    private bool wrathAvailable;
+    private bool combatAvailable;
     private bool autoDutyInstalled;
 
     /// <summary>
@@ -61,7 +61,7 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
         // The dependency checks go through IPC and the plugin list; only probe
         // them when the window opens instead of every frame.
         this.navmeshInstalled = NavmeshIpc.IsInstalled;
-        this.wrathAvailable = WrathComboIpc.IsAvailable();
+        this.combatAvailable = CombatIpc.IsAvailable();
         this.autoDutyInstalled = AutoDutyIpc.IsInstalled;
     }
 
@@ -93,6 +93,8 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
                 "FATEs, Levequests). Press the Start button of any step to run the\n" +
                 "whole book from there.");
         }
+
+        this.DrawCombatPluginSelector();
 
         ImGui.Spacing();
 
@@ -135,10 +137,45 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
         ImGui.TextColored(ok ? ImGuiColors.HealerGreen : ImGuiColors.DalamudRed, ok ? okText : errorText);
     }
 
+    private void DrawCombatPluginSelector()
+    {
+        var configuration = Service.Configuration.AtmaAutomation;
+        var anyRunning = this.manager.IsRunning
+                         || this.dungeonManager.IsRunning
+                         || this.fateManager.IsRunning
+                         || this.leveManager.IsRunning;
+
+        ImGui.BeginDisabled(anyRunning);
+        ImGui.SetNextItemWidth(140f);
+        if (ImGui.BeginCombo("Combat plugin", CombatIpc.GetName(configuration.CombatPlugin)))
+        {
+            foreach (var plugin in new[] { CombatPlugin.BossMod, CombatPlugin.WrathCombo })
+            {
+                if (ImGui.Selectable(CombatIpc.GetName(plugin), plugin == configuration.CombatPlugin))
+                {
+                    configuration.CombatPlugin = plugin;
+                    Service.Configuration.Save();
+                    this.combatAvailable = CombatIpc.IsAvailable();
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+        {
+            ImGui.SetTooltip(
+                "The plugin that fights during the Enemies, FATEs and Leves steps.\n" +
+                "BossMod runs the rotation and dodges AoEs; Wrath Combo only runs\n" +
+                "the rotation. Cannot be changed while an automation is running.");
+        }
+    }
+
     private void DrawEnemiesTab(BraveBook book)
     {
         DrawStatusLine("vnavmesh:", this.navmeshInstalled, "Installed", "Not installed");
-        DrawStatusLine("Wrath Combo:", this.wrathAvailable, "Ready", "Not available");
+        DrawStatusLine($"{CombatIpc.ConfiguredName}:", this.combatAvailable, "Ready", "Not available");
         ImGui.Separator();
 
         this.DrawEnemiesTable(book);
@@ -297,7 +334,7 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
     private void DrawFatesTab(BraveBook book)
     {
         DrawStatusLine("vnavmesh:", this.navmeshInstalled, "Installed", "Not installed");
-        DrawStatusLine("Wrath Combo:", this.wrathAvailable, "Ready", "Not available");
+        DrawStatusLine($"{CombatIpc.ConfiguredName}:", this.combatAvailable, "Ready", "Not available");
         ImGui.Separator();
 
         this.DrawFatesTable(book);
@@ -356,7 +393,7 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
         else
         {
             // All three automations drive the character; never run two at once.
-            var canStart = FateAutomationManager.CanStart(this.navmeshInstalled, this.wrathAvailable, out var reason);
+            var canStart = FateAutomationManager.CanStart(this.navmeshInstalled, this.combatAvailable, out var reason);
             if (canStart && this.manager.IsRunning)
             {
                 canStart = false;
@@ -414,7 +451,7 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
     private void DrawLevesTab(BraveBook book)
     {
         DrawStatusLine("vnavmesh:", this.navmeshInstalled, "Installed", "Not installed");
-        DrawStatusLine("Wrath Combo:", this.wrathAvailable, "Ready", "Not available");
+        DrawStatusLine($"{CombatIpc.ConfiguredName}:", this.combatAvailable, "Ready", "Not available");
         ImGui.Separator();
 
         this.DrawLevesTable(book);
@@ -482,7 +519,7 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
         else
         {
             // All automations drive the character; never run two at once.
-            var canStart = LeveAutomationManager.CanStart(this.navmeshInstalled, this.wrathAvailable, out var reason);
+            var canStart = LeveAutomationManager.CanStart(this.navmeshInstalled, this.combatAvailable, out var reason);
             if (canStart && this.manager.IsRunning)
             {
                 canStart = false;
@@ -550,7 +587,7 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
         {
             // Uses the dependency statuses probed on window open; the cheap
             // player/book checks stay live. Start() re-runs the full check.
-            var canStart = AtmaAutomationManager.CanStart(this.navmeshInstalled, this.wrathAvailable, out var reason);
+            var canStart = AtmaAutomationManager.CanStart(this.navmeshInstalled, this.combatAvailable, out var reason);
             if (canStart && this.dungeonManager.IsRunning)
             {
                 canStart = false;

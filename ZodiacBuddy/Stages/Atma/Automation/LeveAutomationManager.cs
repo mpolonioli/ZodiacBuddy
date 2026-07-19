@@ -28,7 +28,7 @@ internal sealed class LeveAutomationManager : IDisposable, IBookAutomation
     private const uint DismountActionId = 23;
 
     private readonly NavmeshIpc navmesh;
-    private readonly WrathComboIpc wrath;
+    private readonly CombatIpc combat;
     private readonly AdvancedUnstuck unstuck;
     private readonly BookTravelManager bookTravel;
     private System.Action? unstuckRecovery;
@@ -68,10 +68,10 @@ internal sealed class LeveAutomationManager : IDisposable, IBookAutomation
     public LeveAutomationManager(AdvancedUnstuck unstuck, BookTravelManager bookTravel)
     {
         this.navmesh = new NavmeshIpc();
-        this.wrath = new WrathComboIpc();
+        this.combat = new CombatIpc();
         this.unstuck = unstuck;
         this.bookTravel = bookTravel;
-        this.wrath.LeaseCancelled += this.OnLeaseCancelled;
+        this.combat.ControlLost += this.OnControlLost;
         Service.Framework.Update += this.OnUpdate;
     }
 
@@ -111,18 +111,18 @@ internal sealed class LeveAutomationManager : IDisposable, IBookAutomation
     /// <param name="reason">The reason it cannot be started.</param>
     /// <returns>Whether the automation can be started.</returns>
     public static bool CanStart(out string reason)
-        => CanStart(NavmeshIpc.IsInstalled, WrathComboIpc.IsAvailable(), out reason);
+        => CanStart(NavmeshIpc.IsInstalled, CombatIpc.IsAvailable(), out reason);
 
     /// <summary>
     ///     Check whether the automation can be started right now, using already known
     ///     dependency statuses to avoid IPC calls.
     /// </summary>
     /// <param name="navmeshInstalled">Whether vnavmesh is installed.</param>
-    /// <param name="wrathAvailable">Whether Wrath Combo is available.</param>
+    /// <param name="combatAvailable">Whether the configured combat plugin is available.</param>
     /// <param name="reason">The reason it cannot be started.</param>
     /// <returns>Whether the automation can be started.</returns>
-    internal static bool CanStart(bool navmeshInstalled, bool wrathAvailable, out string reason)
-        => AtmaAutomationManager.CanStart(navmeshInstalled, wrathAvailable, out reason);
+    internal static bool CanStart(bool navmeshInstalled, bool combatAvailable, out string reason)
+        => AtmaAutomationManager.CanStart(navmeshInstalled, combatAvailable, out reason);
 
     /// <summary>
     ///     Get the combined status of a book levequest slot.
@@ -163,9 +163,9 @@ internal sealed class LeveAutomationManager : IDisposable, IBookAutomation
             return;
         }
 
-        if (!this.wrath.BeginControl())
+        if (!this.combat.BeginControl())
         {
-            this.LastError = "Could not take control of Wrath Combo.";
+            this.LastError = $"Could not take control of {CombatIpc.ConfiguredName}.";
             Service.PluginLog.Warning($"[LeveAutomation] {this.LastError}");
             return;
         }
@@ -197,9 +197,9 @@ internal sealed class LeveAutomationManager : IDisposable, IBookAutomation
     public void Dispose()
     {
         Service.Framework.Update -= this.OnUpdate;
-        this.wrath.LeaseCancelled -= this.OnLeaseCancelled;
+        this.combat.ControlLost -= this.OnControlLost;
         this.Cleanup();
-        this.wrath.Dispose();
+        this.combat.Dispose();
     }
 
     private static void Log(string message)
@@ -314,9 +314,9 @@ internal sealed class LeveAutomationManager : IDisposable, IBookAutomation
             return false;
         }
 
-        if (!this.wrath.HasLease)
+        if (!this.combat.HasControl)
         {
-            this.Fail("The Wrath Combo lease was revoked.");
+            this.Fail($"Control of {this.combat.ControlledName} was revoked.");
             return false;
         }
 
@@ -984,14 +984,14 @@ internal sealed class LeveAutomationManager : IDisposable, IBookAutomation
         this.navmesh.Stop();
         this.unstuck.Stop();
         this.unstuckRecovery = null;
-        this.wrath.EndControl();
+        this.combat.EndControl();
     }
 
-    private void OnLeaseCancelled()
+    private void OnControlLost()
     {
         if (this.IsRunning)
         {
-            this.Fail("The Wrath Combo lease was revoked.");
+            this.Fail($"Control of {this.combat.ControlledName} was revoked.");
         }
     }
 

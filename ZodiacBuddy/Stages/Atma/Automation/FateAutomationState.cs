@@ -83,6 +83,12 @@ internal enum FateAutomationState
     HandlingAggro,
 
     /// <summary>
+    ///     Recovering from a death: accepting the return to the aetheryte and
+    ///     waiting out Weakness before resuming.
+    /// </summary>
+    Recovering,
+
+    /// <summary>
     ///     The FATEs page of the book is complete.
     /// </summary>
     Completed,

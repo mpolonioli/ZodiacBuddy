@@ -45,6 +45,9 @@ internal sealed class NavmeshIpc
 
     [EzIPC("Query.Mesh.PointOnFloor")]
     private readonly Func<Vector3, bool, float, Vector3?>? queryPointOnFloor;
+
+    [EzIPC("Query.Mesh.NearestPoint")]
+    private readonly Func<Vector3, float, float, Vector3?>? queryNearestPoint;
 #pragma warning restore SA1310, CS0649
 
     /// <summary>
@@ -138,6 +141,40 @@ internal sealed class NavmeshIpc
     /// <returns>The point on the floor, or null if none was found.</returns>
     public Vector3? PointOnFloor(Vector3 position, float halfExtentXZ)
         => this.Invoke<Vector3?>(() => this.queryPointOnFloor?.Invoke(position, false, halfExtentXZ), null);
+
+    /// <summary>
+    ///     Find the navmesh point closest to the given position within the given
+    ///     search box.
+    /// </summary>
+    /// <param name="position">Position in world coordinates.</param>
+    /// <param name="halfExtentXZ">Horizontal search radius.</param>
+    /// <param name="halfExtentY">Vertical search radius.</param>
+    /// <returns>The nearest mesh point, or null if none was found.</returns>
+    public Vector3? NearestPoint(Vector3 position, float halfExtentXZ, float halfExtentY)
+        => this.Invoke<Vector3?>(() => this.queryNearestPoint?.Invoke(position, halfExtentXZ, halfExtentY), null);
+
+    /// <summary>
+    ///     Find a navigable point near the given position, whose Y coordinate is
+    ///     trustworthy, preferring mesh points on the same vertical layer. On maps
+    ///     with stacked terrain (e.g. The Big Bagoly Theory's area, where one piece
+    ///     of land sits above another) a plain top-down floor drop would snap to
+    ///     the upper layer even though the target is on the lower one.
+    /// </summary>
+    /// <param name="position">Position in world coordinates, with a correct Y.</param>
+    /// <returns>The point on the floor, or null if none was found.</returns>
+    public Vector3? FindNavigablePointOnLayer(Vector3 position)
+    {
+        foreach (var halfExtent in new[] { 5f, 10f, 20f })
+        {
+            var point = this.NearestPoint(position, halfExtent, 15f);
+            if (point is not null)
+            {
+                return point;
+            }
+        }
+
+        return this.FindNavigablePoint(position);
+    }
 
     /// <summary>
     ///     Find a navigable point near the given position, whose Y coordinate may

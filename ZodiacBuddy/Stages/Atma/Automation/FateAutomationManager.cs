@@ -65,6 +65,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
     private bool retriedFateApproach;
     private uint activeFateId;
     private EngagementKind engagementKind;
+    private int patrolIndex;
 
     private List<uint> aetheryteCandidates = [];
     private int aetheryteIndex;
@@ -503,6 +504,14 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         this.CurrentSlot = this.scouting ? nextToScout : firstIncomplete;
         this.currentFate = this.currentBook.Fates[this.CurrentSlot];
         this.chainedFateIds = ComputeChainedFates(this.currentFate.FateId);
+
+        // Some prerequisites (e.g. the Gauging Tidegate FATEs that spawn the
+        // Breaching ones) are not recorded in the FATEChain column at all.
+        if (FateTweaks.PrerequisiteFates.TryGetValue(this.currentFate.FateId, out var prerequisites))
+        {
+            this.chainedFateIds.UnionWith(prerequisites);
+        }
+
         if (this.chainedFateIds.Count > 0)
         {
             Log($"{this.currentFate.Name} is part of a FATE chain ({string.Join(", ", this.chainedFateIds)}).");
@@ -646,10 +655,13 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
 
         // Already up: commit to it right away, just as the normal flow would. The
         // scouting flag stays set so that if this attempt ends without credit the
-        // sweep resumes with the remaining FATEs instead of waiting here.
-        if (this.FindTargetFate() is { } fate)
+        // sweep resumes with the remaining FATEs instead of waiting here. A
+        // chained/prerequisite FATE being up matters just as much as the target
+        // itself - e.g. the Breaching Tidegate FATEs only ever spawn once their
+        // Gauging FATE is cleared, so clearing it now is progress on the target.
+        if (this.TryFindEngagableFate(out var fate, out var kind))
         {
-            this.EngageFate(fate, EngagementKind.Target);
+            this.EngageFate(fate, kind);
             return;
         }
 
@@ -767,7 +779,13 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
 
         if (!this.stateEntered)
         {
-            var floor = this.navmesh.FindNavigablePoint(this.travelGoal);
+            // A FATE position carries the correct height; keep it on that terrain
+            // layer (The Big Bagoly Theory's boss sits under another piece of land,
+            // and a top-down drop would path onto the land above it). Spawn-point
+            // goals come from 2D map coordinates, so their Y means nothing.
+            var floor = this.travelingToFate
+                ? this.navmesh.FindNavigablePointOnLayer(this.travelGoal)
+                : this.navmesh.FindNavigablePoint(this.travelGoal);
             if (floor is null)
             {
                 this.AbandonTravel($"No navigable point found near {this.TravelGoalName}.");
@@ -1006,9 +1024,9 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
                 return;
             }
 
-            if (this.FindTargetFate() is { } scoutFate)
+            if (this.TryFindEngagableFate(out var scoutFate, out var scoutKind))
             {
-                this.EngageFate(scoutFate, EngagementKind.Target);
+                this.EngageFate(scoutFate, scoutKind);
                 return;
             }
 
@@ -1160,7 +1178,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         // covers the last stretch, so no mount is needed here.
         if (!this.stateEntered)
         {
-            var target = this.navmesh.FindNavigablePoint(fate.Position) ?? fate.Position;
+            var target = this.navmesh.FindNavigablePointOnLayer(fate.Position) ?? fate.Position;
             this.navmesh.SetTolerance(0.5f);
             if (!this.navmesh.PathfindAndMoveTo(target, Service.Condition[ConditionFlag.InFlight]))
             {
@@ -1193,7 +1211,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         if (this.CheckStuck(player.Position, () =>
             {
                 this.navmesh.Stop();
-                var target = this.navmesh.FindNavigablePoint(fate.Position) ?? fate.Position;
+                var target = this.navmesh.FindNavigablePointOnLayer(fate.Position) ?? fate.Position;
                 this.navmesh.PathfindAndMoveTo(target, false);
             }))
         {
@@ -1312,6 +1330,17 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
             return;
         }
 
+        // Some FATEs only progress by destroying specific unanimated objects
+        // (Air Supply's airstones, Schism's kobold toolboxes); those beat any
+        // regular enemy, which only needs killing when no object is in sight.
+        var hasPriorityTarget = FateTweaks.PriorityTargets.TryGetValue(this.activeFateId, out var priorityTarget);
+        if (hasPriorityTarget
+            && this.FindPriorityFateMob(player, priorityTarget.NameFragment) is { } priorityMob)
+        {
+            this.FightMob(player, priorityMob);
+            return;
+        }
+
         var mob = this.FindFateMob(player);
         var collectable = isCollect && fate.HandInCount < HandInBatchSize ? this.FindFateCollectable(player) : null;
 
@@ -1333,6 +1362,16 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         if (isCollect && fate.HandInCount > 0)
         {
             this.TransitionTo(FateAutomationState.HandingIn);
+            return;
+        }
+
+        // The objective objects are scattered across the whole area and only
+        // load into the object table nearby; sweep the area for the remaining
+        // ones instead of waiting at the centre for enemies that may never come.
+        if (hasPriorityTarget)
+        {
+            this.StatusDetail = $"Searching {fate.Name} for {priorityTarget.DisplayName} ({fate.Progress}%)...";
+            this.PatrolFateArea(fate, player.Position);
             return;
         }
 
@@ -1649,6 +1688,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
     {
         this.activeFateId = fate.FateId;
         this.engagementKind = kind;
+        this.patrolIndex = 0;
         var label = kind switch
         {
             EngagementKind.Chain => "chained FATE",
@@ -1661,7 +1701,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         // path around terrain; generation is asynchronous and usually done by the
         // time the fight starts. The center can be unreachable (a tower FATE), so
         // generate from the nearest navigable point and widen by the offset.
-        var mapCenter = this.navmesh.FindNavigablePoint(fate.Position) ?? fate.Position;
+        var mapCenter = this.navmesh.FindNavigablePointOnLayer(fate.Position) ?? fate.Position;
         var mapMargin = Vector3.Distance(mapCenter, fate.Position);
         this.combat.PrepareFateObstacleMap(fate.FateId, mapCenter, fate.Radius + Math.Max(mapMargin, 10f));
 
@@ -1691,6 +1731,47 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
             .OrderByDescending(b => b.TargetObjectId == player.GameObjectId)
             .ThenBy(b => Vector3.DistanceSquared(b.Position, player.Position))
             .FirstOrDefault();
+    }
+
+    private IBattleNpc? FindPriorityFateMob(Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player, string nameFragment)
+    {
+        // Unanimated objective objects are battle NPCs, but unlike regular FATE
+        // mobs they are not reliably flagged hostile Combatants; their name is
+        // the dependable signal.
+        return Service.ObjectTable.OfType<IBattleNpc>()
+            .Where(b => !b.IsDead
+                        && b.IsTargetable
+                        && FateGameActions.GetObjectFateId(b) == this.activeFateId
+                        && b.Name.TextValue.Contains(nameFragment, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(b => Vector3.DistanceSquared(b.Position, player.Position))
+            .FirstOrDefault();
+    }
+
+    private void PatrolFateArea(IFate fate, Vector3 playerPosition)
+    {
+        if (this.navmesh.IsPathRunning || this.navmesh.IsPathfindInProgress
+            || !EzThrottler.Throttle("ZodiacBuddy.FateAuto.Patrol", 2000))
+        {
+            return;
+        }
+
+        // Cycle through a ring of points well inside the FATE boundary; objects
+        // not yet loaded appear in the object table as their point is approached.
+        const int patrolPointCount = 6;
+        for (var i = 0; i < patrolPointCount; i++)
+        {
+            this.patrolIndex = (this.patrolIndex + 1) % patrolPointCount;
+            var angle = 2f * MathF.PI * this.patrolIndex / patrolPointCount;
+            var offset = new Vector3(MathF.Sin(angle), 0f, MathF.Cos(angle)) * fate.Radius * 0.6f;
+            var goal = this.navmesh.FindNavigablePointOnLayer(fate.Position + offset);
+            if (goal is null || Vector3.Distance(goal.Value, playerPosition) < 10f)
+            {
+                continue;
+            }
+
+            this.navmesh.PathfindAndMoveCloseTo(goal.Value, 5f);
+            return;
+        }
     }
 
     private IGameObject? FindFateCollectable(Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player)

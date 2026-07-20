@@ -241,7 +241,20 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         => Service.DataManager.GetExcelSheet<LuminaFate>().GetRow(fateId).Rule == CollectFateRule;
 
     private static bool IsInsideFateArea(IFate fate, Vector3 position)
-        => Vector3.Distance(position, fate.Position) <= Math.Max(fate.Radius - 5f, 5f);
+    {
+        // Once a FATE runs, the game's own membership is the authority. A plain
+        // 3D-distance check lies on stacked terrain: standing on a piece of land
+        // above the FATE area (The Big Bagoly Theory) is within the radius
+        // without being in the FATE, which used to cut travel short up there and
+        // ping-pong EnteringFate <-> SyncingLevel forever. Preparing FATEs have
+        // no membership yet, so distance is all there is for them.
+        if (fate.State == FateState.Running)
+        {
+            return FateGameActions.IsInsideFate(fate.FateId);
+        }
+
+        return Vector3.Distance(position, fate.Position) <= Math.Max(fate.Radius - 5f, 5f);
+    }
 
     /// <summary>
     ///     Collect every FATE connected to the given one through the FATEChain
@@ -792,6 +805,8 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
                 return;
             }
 
+            Service.PluginLog.Debug(
+                $"[FateAutomation] Resolved {this.TravelGoalName} at {this.travelGoal} to navmesh point {floor.Value}.");
             this.travelGoal = floor.Value;
             if (!this.travelingToFate)
             {
@@ -1178,7 +1193,8 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         // covers the last stretch, so no mount is needed here.
         if (!this.stateEntered)
         {
-            var target = this.navmesh.FindNavigablePointOnLayer(fate.Position) ?? fate.Position;
+            var approach = this.GetFateApproachPoint(fate);
+            var target = this.navmesh.FindNavigablePointOnLayer(approach) ?? approach;
             this.navmesh.SetTolerance(0.5f);
             if (!this.navmesh.PathfindAndMoveTo(target, Service.Condition[ConditionFlag.InFlight]))
             {
@@ -1211,8 +1227,8 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         if (this.CheckStuck(player.Position, () =>
             {
                 this.navmesh.Stop();
-                var target = this.navmesh.FindNavigablePointOnLayer(fate.Position) ?? fate.Position;
-                this.navmesh.PathfindAndMoveTo(target, false);
+                var approach = this.GetFateApproachPoint(fate);
+                this.navmesh.PathfindAndMoveTo(this.navmesh.FindNavigablePointOnLayer(approach) ?? approach, false);
             }))
         {
             // Retry through the full travel machinery (mount, fly, aetheryte or
@@ -1707,7 +1723,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
 
         // FATEs can be far apart; go through the full probe/travel machinery
         // (mount, fly, ground fallback) to get there, then start or enter it.
-        this.travelGoal = fate.Position;
+        this.travelGoal = this.GetFateApproachPoint(fate);
         this.travelingToFate = true;
         this.retriedFateApproach = false;
         this.flyDisabledForLeg = false;
@@ -1716,6 +1732,28 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
 
     private IFate? GetActiveFate()
         => Service.Fates.FirstOrDefault(f => f.FateId == this.activeFateId);
+
+    /// <summary>
+    ///     Get the point to move toward when approaching or entering a FATE: its
+    ///     centre, unless a replacement approach point is defined because the
+    ///     centre lies under an overlapping piece of terrain.
+    /// </summary>
+    private Vector3 GetFateApproachPoint(IFate fate)
+    {
+        if (!FateTweaks.ApproachPoints.TryGetValue(fate.FateId, out var mapCoords))
+        {
+            return fate.Position;
+        }
+
+        // Engaged FATEs are always in the current book FATE's zone, so its map
+        // provides the coordinate conversion.
+        var map = Service.DataManager.GetExcelSheet<Map>().GetRow(this.currentFate.Position.Map.RowId);
+        var x = AtmaAutomationManager.MapToWorld(mapCoords.X, map.SizeFactor, map.OffsetX);
+        var z = AtmaAutomationManager.MapToWorld(mapCoords.Y, map.SizeFactor, map.OffsetY);
+
+        // The FATE's own height is close enough for the on-layer floor search.
+        return new Vector3(x, fate.Position.Y, z);
+    }
 
     private IBattleNpc? FindFateMob(Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player)
     {

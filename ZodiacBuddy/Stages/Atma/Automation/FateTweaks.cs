@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Numerics;
 
 namespace ZodiacBuddy.Stages.Atma.Automation;
 
@@ -23,6 +24,20 @@ internal static class FateTweaks
 
         // Air Supply (North Shroud): destroy every airstone in the area.
         [633] = new("airstone", "airstones"),
+    };
+
+    /// <summary>
+    ///     Gets replacement approach points (map coordinates) for FATEs whose
+    ///     centre lies under an overlapping piece of terrain, where any floor
+    ///     query is ambiguous between the two layers. The replacement point is
+    ///     inside the FATE area but clear of the overlap, so approaching it
+    ///     always resolves to the correct layer.
+    /// </summary>
+    public static IReadOnlyDictionary<uint, Vector2> ApproachPoints { get; } = new Dictionary<uint, Vector2>
+    {
+        // The Big Bagoly Theory (Eastern Thanalan): only a small portion around
+        // the centre is overlapped by the upper terrain layer.
+        [543] = new(30.1f, 25.4f),
     };
 
     /// <summary>

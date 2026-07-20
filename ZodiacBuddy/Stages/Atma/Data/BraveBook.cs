@@ -368,7 +368,7 @@ internal struct BraveBook
             517 => new MapLinkPayload(156, 25, 13.0f, 12.0f), // Good to Be Bud             // Mor Dhona
             521 => new MapLinkPayload(156, 25, 31.0f, 5.0f), // Another Notch on the Torch // Mor Dhona
             540 => new MapLinkPayload(145, 22, 26.0f, 24.0f), // Quartz Coupling            // Eastern Thanalan
-            543 => new MapLinkPayload(145, 22, 30.0f, 25.0f), // The Big Bagoly Theory      // Eastern Thanalan
+            543 => new MapLinkPayload(145, 22, 30.1f, 25.4f), // The Big Bagoly Theory      // Eastern Thanalan (offset from the centre, which sits under an overlapping upper terrain layer)
             552 => new MapLinkPayload(146, 23, 18.0f, 20.0f), // Taken                      // Southern Thanalan
             569 => new MapLinkPayload(138, 18, 21.0f, 19.0f), // Breaching North Tidegate   // Western La Noscea
             571 => new MapLinkPayload(138, 18, 18.0f, 22.0f), // Breaching South Tidegate   // Western La Noscea

@@ -7,6 +7,7 @@ using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using ZodiacBuddy.BonusLight;
 using ZodiacBuddy.Stages.Atma;
 using ZodiacBuddy.Stages.Atma.Automation;
 
@@ -16,7 +17,7 @@ namespace ZodiacBuddy.Stages.Brave.Automation;
 ///     Automates the Zodiac Zeta mahatma grind: buys the next available mahatma
 ///     from Remon at Swiftperch for Allagan tomestones of poetics whenever none is
 ///     attached or the attached one is fully awakened, and charges the attached
-///     mahatma by running The Bowl of Embers unsynced through AutoDuty.
+///     mahatma by running the configured light duty unsynced through AutoDuty.
 /// </summary>
 internal sealed class ZetaAutomationManager : IDisposable
 {
@@ -30,13 +31,6 @@ internal sealed class ZetaAutomationManager : IDisposable
 
     private const int MahatmaBand = 500;
     private const int MahatmaTotal = 12;
-
-    /// <summary>
-    ///     Territory of the duty used to charge the mahatma: The Bowl of Embers
-    ///     (Extreme), run unsynced.
-    /// </summary>
-    private const uint DutyTerritoryId = 295;
-    private const string DutyName = "The Bowl of Embers (Extreme)";
 
     private const string RemonName = "Remon";
     private const uint RemonTerritoryId = 138;
@@ -87,6 +81,9 @@ internal sealed class ZetaAutomationManager : IDisposable
     private uint relicItemId;
     private string relicName = string.Empty;
     private string nextMahatmaKeyword = string.Empty;
+
+    private uint dutyTerritoryId;
+    private string dutyName = string.Empty;
 
     private List<uint> aetheryteCandidates = [];
     private Vector3 destination;
@@ -174,6 +171,17 @@ internal sealed class ZetaAutomationManager : IDisposable
     }
 
     /// <summary>
+    ///     Get the duty the automation is configured to charge the mahatma with.
+    /// </summary>
+    /// <param name="territoryId">Territory ID of the duty.</param>
+    /// <returns>The duty, or null when the configured one is unknown.</returns>
+    public static BonusLightDuty? GetConfiguredDuty(out uint territoryId)
+    {
+        territoryId = Service.Configuration.Brave.AutomationTerritoryId;
+        return BonusLightDuty.TryGetValue(territoryId, out var duty) ? duty : null;
+    }
+
+    /// <summary>
     ///     Start the mahatma automation for the equipped Zodiac weapon.
     /// </summary>
     public void Start()
@@ -190,13 +198,23 @@ internal sealed class ZetaAutomationManager : IDisposable
             return;
         }
 
+        var duty = GetConfiguredDuty(out var territoryId);
+        if (duty is null)
+        {
+            this.LastError = "The configured charging duty is unknown. Pick one in the settings.";
+            Service.PluginLog.Warning($"[ZetaAutomation] {this.LastError}");
+            return;
+        }
+
         var slot = TryGetRelicSlot(out var itemId)!.Value;
         this.relicSlot = slot;
         this.relicItemId = itemId;
         this.relicName = BraveRelic.Items[itemId];
+        this.dutyTerritoryId = territoryId;
+        this.dutyName = duty.DutyName;
         this.LastError = string.Empty;
         this.noProgressRuns = 0;
-        Log($"Starting the mahatma automation for {this.relicName}.");
+        Log($"Starting the mahatma automation for {this.relicName}, charging on {this.dutyName}.");
         this.TransitionTo(ZetaAutomationState.DecidingNextStep);
     }
 
@@ -639,7 +657,7 @@ internal sealed class ZetaAutomationManager : IDisposable
     private void HandleStartingDuty()
     {
         var (_, charge, _) = this.ReadProgress();
-        this.StatusDetail = $"Starting {DutyName} ({charge / 2}/40)...";
+        this.StatusDetail = $"Starting {this.dutyName} ({charge / 2}/40)...";
 
         // Close any dialogue left over from the purchase before queuing.
         if (FateGameActions.ProgressTalk() || ZetaGameActions.CloseMenu())
@@ -656,23 +674,23 @@ internal sealed class ZetaAutomationManager : IDisposable
                 return;
             }
 
-            if (!this.autoDuty.HasPath(DutyTerritoryId))
+            if (!this.autoDuty.HasPath(this.dutyTerritoryId))
             {
                 if (this.StateAge > TimeSpan.FromSeconds(12))
                 {
-                    this.Fail($"AutoDuty has no path for {DutyName}.");
+                    this.Fail($"AutoDuty has no path for {this.dutyName}.");
                 }
 
                 return;
             }
 
-            if (!this.autoDuty.RunUnsynced(DutyTerritoryId))
+            if (!this.autoDuty.RunUnsynced(this.dutyTerritoryId))
             {
-                this.Fail($"Could not start an AutoDuty run of {DutyName}.");
+                this.Fail($"Could not start an AutoDuty run of {this.dutyName}.");
                 return;
             }
 
-            Log($"Running {DutyName} unsynced through AutoDuty ({charge / 2}/40).");
+            Log($"Running {this.dutyName} unsynced through AutoDuty ({charge / 2}/40).");
             this.chargeAtRunStart = charge;
             this.stateEntered = true;
             return;
@@ -687,14 +705,14 @@ internal sealed class ZetaAutomationManager : IDisposable
 
         if (this.StateAge > TimeSpan.FromSeconds(60))
         {
-            this.Fail($"AutoDuty did not start {DutyName} in time.");
+            this.Fail($"AutoDuty did not start {this.dutyName} in time.");
         }
     }
 
     private void HandleRunningDuty()
     {
         var (_, charge, _) = this.ReadProgress();
-        this.StatusDetail = $"Running {DutyName} ({charge / 2}/40)...";
+        this.StatusDetail = $"Running {this.dutyName} ({charge / 2}/40)...";
 
         // Only move on once AutoDuty has fully stopped, so we never issue the
         // next run or start traveling while it is still exiting the duty.
@@ -702,7 +720,7 @@ internal sealed class ZetaAutomationManager : IDisposable
         {
             if (this.StateAge > TimeSpan.FromMinutes(30))
             {
-                this.Fail($"The {DutyName} run did not finish in time.");
+                this.Fail($"The {this.dutyName} run did not finish in time.");
             }
 
             return;
@@ -712,7 +730,7 @@ internal sealed class ZetaAutomationManager : IDisposable
         {
             if (++this.noProgressRuns >= 2)
             {
-                this.Fail($"Runs of {DutyName} grant no light. Complete the duty once manually to check.");
+                this.Fail($"Runs of {this.dutyName} grant no light. Complete the duty once manually to check.");
                 return;
             }
 

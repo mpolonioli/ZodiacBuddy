@@ -95,11 +95,7 @@ internal class BraveWindow : InformationWindow.InformationWindow
             ImGui.EndDisabled();
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             {
-                ImGui.SetTooltip(this.canStart
-                    ? "Buy the next mahatma from Remon at Swiftperch when none is\n" +
-                      "attached or the current one is awakened, and charge it by\n" +
-                      "running The Bowl of Embers unsynced through AutoDuty."
-                    : this.cannotStartReason);
+                ImGui.SetTooltip(this.canStart ? BuildStartTooltip() : this.cannotStartReason);
             }
         }
 
@@ -118,5 +114,18 @@ internal class BraveWindow : InformationWindow.InformationWindow
         {
             ImGui.TextColored(ImGuiColors.DalamudRed, this.automation.LastError);
         }
+    }
+
+    private static string BuildStartTooltip()
+    {
+        var duty = ZetaAutomationManager.GetConfiguredDuty(out _);
+        var dutyName = duty is null
+            ? "the configured duty"
+            : duty.DutyName.Replace("Œ", "Oe").Replace("œ", "oe");
+
+        return "Buy the next mahatma from Remon at Swiftperch when none is\n" +
+               "attached or the current one is awakened, and charge it by\n" +
+               $"running {dutyName} unsynced through AutoDuty.\n" +
+               "The duty can be changed in the Brave settings.";
     }
 }

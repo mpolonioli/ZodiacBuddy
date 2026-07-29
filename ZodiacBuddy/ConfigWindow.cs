@@ -399,6 +399,20 @@ internal class ConfigWindow : Window
             Service.Configuration.Save();
         }
 
+        DrawLightDutyCombo(
+            "Brave",
+            Service.Configuration.Brave.AutomationTerritoryId,
+            territoryId =>
+            {
+                Service.Configuration.Brave.AutomationTerritoryId = territoryId;
+                Service.Configuration.Save();
+            },
+            "The duty the \"Start mahatma automation\" button of the Zodiac Brave\n" +
+            "window runs unsynced through AutoDuty to charge the attached mahatma,\n" +
+            "which awakens after 40 points of light. The listed light is the value\n" +
+            "the plugin tracks for the Novus stage; the richer the duty, the fewer\n" +
+            "runs a mahatma takes. AutoDuty needs a path for it.");
+
         ImGui.Spacing();
     }
 

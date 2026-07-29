@@ -26,4 +26,11 @@ public class NovusConfiguration
     ///     and is the quickest of them to clear unsynced.
     /// </summary>
     public uint AutomationTerritoryId { get; set; } = 1036;
+
+    /// <summary>
+    ///     Gets or sets a value indicating whether the light automation runs
+    ///     whichever duty currently carries a light bonus instead of the
+    ///     configured one, falling back to it while no bonus is active.
+    /// </summary>
+    public bool PreferBonusLightDuty { get; set; }
 }

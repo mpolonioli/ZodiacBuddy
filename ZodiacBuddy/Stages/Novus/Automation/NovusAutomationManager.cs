@@ -61,6 +61,8 @@ internal sealed class NovusAutomationManager : IDisposable
     /// </summary>
     public bool IsRunning => this.State is not (NovusAutomationState.Idle or NovusAutomationState.Completed or NovusAutomationState.Errored);
 
+    private static NovusConfiguration Configuration => Service.Configuration.Novus;
+
     private TimeSpan StateAge => DateTime.UtcNow - this.stateEnteredAt;
 
     /// <summary>
@@ -259,6 +261,49 @@ internal sealed class NovusAutomationManager : IDisposable
     private uint ReadLight()
         => Util.GetEquippedItem(this.relicSlot).SpiritbondOrCollectability;
 
+    /// <summary>
+    ///     Decide which duty the next run uses: the richest duty currently
+    ///     carrying a light bonus when that is preferred and one is available,
+    ///     otherwise the configured duty. Both settings are read fresh so a
+    ///     change takes effect on the next run.
+    /// </summary>
+    private void ResolveDuty()
+    {
+        uint territoryId;
+        string name;
+
+        var bonus = Configuration.PreferBonusLightDuty
+            ? LightDutyPicker.FindBonusDuty(this.autoDuty.HasPath)
+            : null;
+
+        if (bonus is not null)
+        {
+            (territoryId, name) = bonus.Value;
+        }
+        else
+        {
+            var duty = GetConfiguredDuty(out territoryId);
+            if (duty is null)
+            {
+                // Keep running whatever was resolved last rather than stopping.
+                return;
+            }
+
+            name = duty.DutyName;
+        }
+
+        if (territoryId == this.dutyTerritoryId)
+        {
+            return;
+        }
+
+        Log(bonus is not null
+            ? $"Switching to {name}, which currently carries a light bonus."
+            : $"Switching to the configured duty {name}.");
+        this.dutyTerritoryId = territoryId;
+        this.dutyName = name;
+    }
+
     private void HandleStartingDuty()
     {
         var light = this.ReadLight();
@@ -272,6 +317,10 @@ internal sealed class NovusAutomationManager : IDisposable
             {
                 return;
             }
+
+            // Bonus light windows rotate every two hours, so which duty pays best
+            // is decided per run rather than once when the automation started.
+            this.ResolveDuty();
 
             if (!this.autoDuty.HasPath(this.dutyTerritoryId))
             {

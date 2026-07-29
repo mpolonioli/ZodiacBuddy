@@ -324,7 +324,38 @@ internal class ConfigWindow : Window
             "runs unsynced through AutoDuty until the relic holds all 2000 light.\n" +
             "AutoDuty needs a path for it; the automation says so if it has none.");
 
+        var preferBonus = Service.Configuration.Novus.PreferBonusLightDuty;
+        if (DrawPreferBonusLightDuty("Novus", ref preferBonus))
+        {
+            Service.Configuration.Novus.PreferBonusLightDuty = preferBonus;
+            Service.Configuration.Save();
+        }
+
         ImGui.Spacing();
+    }
+
+    /// <summary>
+    ///     Draw the toggle that makes a light automation follow the duty currently
+    ///     carrying a light bonus instead of the configured one.
+    /// </summary>
+    /// <param name="id">Widget ID, unique per stage.</param>
+    /// <param name="value">The current setting, updated when toggled.</param>
+    /// <returns>Whether the setting was changed.</returns>
+    private static bool DrawPreferBonusLightDuty(string id, ref bool value)
+    {
+        var changed = ImGui.Checkbox($"Prioritize bonus light duty##{id}", ref value);
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "Run whichever duty currently carries a light bonus instead of the\n" +
+                "one picked above, falling back to it while no bonus is active.\n" +
+                "The duty is chosen again before every run, so the automation\n" +
+                "follows the bonus as it moves every two hours. Bonus duties\n" +
+                "AutoDuty has no path for are skipped.");
+        }
+
+        return changed;
     }
 
     /// <summary>
@@ -412,6 +443,13 @@ internal class ConfigWindow : Window
             "which awakens after 40 points of light. The listed light is the value\n" +
             "the plugin tracks for the Novus stage; the richer the duty, the fewer\n" +
             "runs a mahatma takes. AutoDuty needs a path for it.");
+
+        var preferBonus = Service.Configuration.Brave.PreferBonusLightDuty;
+        if (DrawPreferBonusLightDuty("Brave", ref preferBonus))
+        {
+            Service.Configuration.Brave.PreferBonusLightDuty = preferBonus;
+            Service.Configuration.Save();
+        }
 
         ImGui.Spacing();
     }

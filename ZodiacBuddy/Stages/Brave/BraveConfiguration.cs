@@ -26,4 +26,11 @@ public class BraveConfiguration
     ///     (Extreme), which is rich in light and quick to clear unsynced.
     /// </summary>
     public uint AutomationTerritoryId { get; set; } = 295;
+
+    /// <summary>
+    ///     Gets or sets a value indicating whether the mahatma automation charges
+    ///     on whichever duty currently carries a light bonus instead of the
+    ///     configured one, falling back to it while no bonus is active.
+    /// </summary>
+    public bool PreferBonusLightDuty { get; set; }
 }

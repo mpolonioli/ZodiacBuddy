@@ -654,6 +654,49 @@ internal sealed class ZetaAutomationManager : IDisposable
         ZetaGameActions.ConfirmPurchaseYesNo();
     }
 
+    /// <summary>
+    ///     Decide which duty the next run uses: the richest duty currently
+    ///     carrying a light bonus when that is preferred and one is available,
+    ///     otherwise the configured duty. Both settings are read fresh so a
+    ///     change takes effect on the next run.
+    /// </summary>
+    private void ResolveDuty()
+    {
+        uint territoryId;
+        string name;
+
+        var bonus = Service.Configuration.Brave.PreferBonusLightDuty
+            ? LightDutyPicker.FindBonusDuty(this.autoDuty.HasPath)
+            : null;
+
+        if (bonus is not null)
+        {
+            (territoryId, name) = bonus.Value;
+        }
+        else
+        {
+            var duty = GetConfiguredDuty(out territoryId);
+            if (duty is null)
+            {
+                // Keep running whatever was resolved last rather than stopping.
+                return;
+            }
+
+            name = duty.DutyName;
+        }
+
+        if (territoryId == this.dutyTerritoryId)
+        {
+            return;
+        }
+
+        Log(bonus is not null
+            ? $"Switching to {name}, which currently carries a light bonus."
+            : $"Switching to the configured duty {name}.");
+        this.dutyTerritoryId = territoryId;
+        this.dutyName = name;
+    }
+
     private void HandleStartingDuty()
     {
         var (_, charge, _) = this.ReadProgress();
@@ -673,6 +716,11 @@ internal sealed class ZetaAutomationManager : IDisposable
             {
                 return;
             }
+
+            // Bonus light windows rotate every two hours, so which duty charges
+            // fastest is decided per run rather than once when the automation
+            // started - a mahatma grind easily outlasts a window.
+            this.ResolveDuty();
 
             if (!this.autoDuty.HasPath(this.dutyTerritoryId))
             {

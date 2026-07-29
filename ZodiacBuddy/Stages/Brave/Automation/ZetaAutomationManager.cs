@@ -2,6 +2,7 @@
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Plugin.Services;
 using ECommons.Throttlers;
+using FFXIVClientStructs.FFXIV.Client.Game;
 using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
@@ -40,6 +41,12 @@ internal sealed class ZetaAutomationManager : IDisposable
     private const string RemonName = "Remon";
     private const uint RemonTerritoryId = 138;
     private const uint DismountActionId = 23;
+
+    /// <summary>
+    ///     Currency each mahatma is exchanged for: 50 Allagan tomestones of poetics.
+    /// </summary>
+    private const uint PoeticsItemId = 28;
+    private const int MahatmaCost = 50;
 
     /// <summary>
     ///     Entry of Remon's greeting menu that opens the mahatma exchange.
@@ -328,6 +335,18 @@ internal sealed class ZetaAutomationManager : IDisposable
     }
 
     /// <summary>
+    ///     Get how many Allagan tomestones of poetics the player is carrying.
+    /// </summary>
+    /// <returns>The tomestone count.</returns>
+    private static unsafe int GetPoeticsCount()
+    {
+        var inventory = InventoryManager.Instance();
+        return inventory == null
+            ? 0
+            : inventory->GetItemCountInContainer(PoeticsItemId, InventoryType.Currency);
+    }
+
+    /// <summary>
     ///     Get the relic's raw mahatma progress.
     /// </summary>
     /// <returns>Index of the current mahatma, its charge within the current band
@@ -357,6 +376,17 @@ internal sealed class ZetaAutomationManager : IDisposable
             var next = raw == 0 ? 0 : index + 1;
             this.nextMahatmaKeyword = MahatmaKeywords[next];
             this.StatusDetail = $"Buying the Mahatma of the {this.nextMahatmaKeyword}...";
+
+            // Remon would refuse the exchange and we would loop through his
+            // menus until the timeout; say so before making the trip. The
+            // charging duty grants no poetics, so waiting would not help.
+            var poetics = GetPoeticsCount();
+            if (poetics < MahatmaCost)
+            {
+                this.Fail($"Not enough Allagan tomestones of poetics for the Mahatma of the " +
+                          $"{this.nextMahatmaKeyword}: {poetics}/{MahatmaCost}.");
+                return;
+            }
 
             var player = Service.ObjectTable.LocalPlayer!;
             if (Service.ClientState.TerritoryType == RemonTerritoryId
@@ -564,8 +594,11 @@ internal sealed class ZetaAutomationManager : IDisposable
 
         if (this.StateAge > TimeSpan.FromSeconds(90))
         {
-            this.Fail($"Could not buy the next mahatma from {RemonName}. " +
-                      "Make sure you have at least 50 Allagan tomestones of poetics.");
+            var poetics = GetPoeticsCount();
+            this.Fail(poetics < MahatmaCost
+                ? $"Not enough Allagan tomestones of poetics for the Mahatma of the " +
+                  $"{this.nextMahatmaKeyword}: {poetics}/{MahatmaCost}."
+                : $"Could not buy the Mahatma of the {this.nextMahatmaKeyword} from {RemonName}.");
         }
     }
 

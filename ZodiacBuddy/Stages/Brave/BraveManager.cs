@@ -3,6 +3,7 @@ using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using System;
+using ZodiacBuddy.Stages.Brave.Automation;
 
 namespace ZodiacBuddy.Stages.Brave;
 
@@ -23,13 +24,15 @@ internal class BraveManager : IDisposable
     // };
 
     private readonly BraveWindow window;
+    private readonly ZetaAutomationManager zetaAutomation;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="BraveManager" /> class.
     /// </summary>
     public BraveManager()
     {
-        window = new BraveWindow();
+        zetaAutomation = new ZetaAutomationManager();
+        window = new BraveWindow(zetaAutomation);
 
         Service.Framework.Update += OnUpdate;
         Service.Interface.UiBuilder.Draw += window.Draw;
@@ -46,6 +49,7 @@ internal class BraveManager : IDisposable
         Service.Interface.UiBuilder.Draw -= window.Draw;
 
         Service.AddonLifecycle.UnregisterListener(AddonRelicMagiciteOnSetupDetour);
+        zetaAutomation.Dispose();
     }
 
     private void AddonRelicMagiciteOnSetupDetour(AddonEvent type, AddonArgs args)

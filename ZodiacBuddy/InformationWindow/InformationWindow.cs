@@ -68,6 +68,7 @@ public abstract class InformationWindow
             DisplayRelicInfo(MainHandItem);
             DisplayRelicInfo(OffhandItem);
             DisplayBonusLight();
+            DisplayFooter();
 
             if (!InfoWindowConfiguration.ManualSize)
             {
@@ -83,6 +84,13 @@ public abstract class InformationWindow
     /// </summary>
     /// <param name="item">Relic to display.</param>
     protected abstract void DisplayRelicInfo(InventoryItem item);
+
+    /// <summary>
+    ///     Display stage-specific content below the relic and bonus light info.
+    /// </summary>
+    protected virtual void DisplayFooter()
+    {
+    }
 
     /// <summary>
     ///     Determine the size of the progress bar.

@@ -7,6 +7,7 @@ using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using System;
 using ZodiacBuddy.BonusLight;
+using ZodiacBuddy.Stages.Novus.Automation;
 
 namespace ZodiacBuddy.Stages.Novus;
 
@@ -28,6 +29,7 @@ internal class NovusManager : IDisposable
     };
 
     private readonly NovusWindow window;
+    private readonly NovusAutomationManager automation;
 
     private DateTime? dutyBeginning;
     private bool onDutyFromBeginning;
@@ -37,7 +39,8 @@ internal class NovusManager : IDisposable
     /// </summary>
     public NovusManager()
     {
-        window = new NovusWindow();
+        automation = new NovusAutomationManager();
+        window = new NovusWindow(automation);
 
         Service.Framework.Update += OnUpdate;
         Service.Toasts.QuestToast += OnToast;
@@ -60,6 +63,7 @@ internal class NovusManager : IDisposable
         Service.DutyState.DutyStarted -= OnDutyStart;
 
         Service.AddonLifecycle.UnregisterListener(AddonRelicGlassOnSetupDetour);
+        automation.Dispose();
     }
 
     private void AddonRelicGlassOnSetupDetour(AddonEvent type, AddonArgs args)

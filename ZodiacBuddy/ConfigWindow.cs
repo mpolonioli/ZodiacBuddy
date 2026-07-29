@@ -1,10 +1,12 @@
-using Dalamud.Bindings.ImGui;
+﻿using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Text;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Windowing;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using System;
+using System.Linq;
 using System.Numerics;
+using ZodiacBuddy.BonusLight;
 
 namespace ZodiacBuddy;
 
@@ -13,6 +15,11 @@ namespace ZodiacBuddy;
 /// </summary>
 internal class ConfigWindow : Window
 {
+    // Built on first use: the duty names come from the Excel sheets, which are
+    // only readable once the game data is loaded.
+    private static string[]? lightDutyLabels;
+    private static uint[]? lightDutyIds;
+
     /// <summary>
     ///     Initializes a new instance of the <see cref="ConfigWindow" /> class.
     /// </summary>
@@ -305,7 +312,68 @@ internal class ConfigWindow : Window
             Service.Configuration.Save();
         }
 
+        DrawLightDutyCombo(
+            "Novus",
+            Service.Configuration.Novus.AutomationTerritoryId,
+            territoryId =>
+            {
+                Service.Configuration.Novus.AutomationTerritoryId = territoryId;
+                Service.Configuration.Save();
+            },
+            "The duty the \"Start light automation\" button of the Novus window\n" +
+            "runs unsynced through AutoDuty until the relic holds all 2000 light.\n" +
+            "AutoDuty needs a path for it; the automation says so if it has none.");
+
         ImGui.Spacing();
+    }
+
+    /// <summary>
+    ///     Draw the picker for the duty an automation runs over and over to gather
+    ///     light. Duties are listed by how much light they grant, richest first, so
+    ///     the trade-off against how long each takes to clear is visible.
+    /// </summary>
+    /// <param name="id">Widget ID, unique per stage: both sections can be open
+    ///     at once and would otherwise share the combo's state.</param>
+    /// <param name="currentTerritoryId">Territory of the configured duty.</param>
+    /// <param name="onChanged">Called with the territory of the picked duty.</param>
+    /// <param name="tooltip">Tooltip describing what the duty is used for.</param>
+    private static void DrawLightDutyCombo(string id, uint currentTerritoryId, Action<uint> onChanged, string tooltip)
+    {
+        if (lightDutyLabels is null || lightDutyIds is null)
+        {
+            var duties = BonusLightDuty.GetDataset()
+                .OrderByDescending(kv => kv.Value.DefaultLightIntensity)
+                .ThenBy(kv => kv.Value.DutyName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            lightDutyIds = duties.Select(kv => kv.Key).ToArray();
+            lightDutyLabels = duties
+                .Select(kv => $"{kv.Value.DutyName.Replace("Œ", "Oe").Replace("œ", "oe")}" +
+                              $" - {kv.Value.DefaultLightIntensity} light")
+                .ToArray();
+        }
+
+        if (lightDutyLabels.Length == 0)
+        {
+            return;
+        }
+
+        var current = Array.IndexOf(lightDutyIds, currentTerritoryId);
+        if (current == -1)
+        {
+            current = 0;
+        }
+
+        ImGui.SetNextItemWidth(320f);
+        if (ImGui.Combo($"Light automation duty##{id}", ref current, lightDutyLabels, lightDutyLabels.Length))
+        {
+            onChanged(lightDutyIds[current]);
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(tooltip);
+        }
     }
 
     private void DrawBrave()

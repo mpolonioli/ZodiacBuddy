@@ -240,6 +240,20 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
     private static bool IsCollectFate(uint fateId)
         => Service.DataManager.GetExcelSheet<LuminaFate>().GetRow(fateId).Rule == CollectFateRule;
 
+    private static bool CountsForProgress(IBattleNpc mob, string[] progressMobs)
+    {
+        var name = mob.Name.TextValue;
+        foreach (var fragment in progressMobs)
+        {
+            if (name.Contains(fragment, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool IsInsideFateArea(IFate fate, Vector3 position)
     {
         // Once a FATE runs, the game's own membership is the authority. A plain
@@ -1757,6 +1771,11 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
 
     private IBattleNpc? FindFateMob(Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player)
     {
+        // In a few FATEs (The Enemy of My Enemy) only some of the hostiles move
+        // the progress bar; killing the rest is wasted time, so they are left
+        // alone unless they pick the fight themselves.
+        var hasProgressMobs = FateTweaks.ProgressMobs.TryGetValue(this.activeFateId, out var progressMobs);
+
         // FATEs like the Tidegate breaches field allied battle NPCs alongside the
         // enemies; only ever pick hostile ones. The nameplate kind is the game's
         // own red-vs-green distinction (StatusFlags.Hostile is not reliable here).
@@ -1765,7 +1784,10 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
                         && b.IsTargetable
                         && b.BattleNpcKind == BattleNpcSubKind.Combatant
                         && b.IsHostile()
-                        && FateGameActions.GetObjectFateId(b) == this.activeFateId)
+                        && FateGameActions.GetObjectFateId(b) == this.activeFateId
+                        && (!hasProgressMobs
+                            || b.TargetObjectId == player.GameObjectId
+                            || CountsForProgress(b, progressMobs!)))
             .OrderByDescending(b => b.TargetObjectId == player.GameObjectId)
             .ThenBy(b => Vector3.DistanceSquared(b.Position, player.Position))
             .FirstOrDefault();

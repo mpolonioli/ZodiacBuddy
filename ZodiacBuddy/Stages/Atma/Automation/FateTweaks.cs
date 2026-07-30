@@ -27,6 +27,19 @@ internal static class FateTweaks
     };
 
     /// <summary>
+    ///     Gets the name fragments (case-insensitive) of the only enemies that
+    ///     advance progress in FATEs where the area also holds hostiles that
+    ///     count for nothing. Non-matching enemies are only fought when they
+    ///     attack us first.
+    /// </summary>
+    public static IReadOnlyDictionary<uint, string[]> ProgressMobs { get; } = new Dictionary<uint, string[]>
+    {
+        // The Enemy of My Enemy (East Shroud): the sylphs' brawl with the imperial
+        // scouts fields other enemies that leave the progress bar untouched.
+        [610] = ["3rd Cohort Secutor", "Wild Jackal"],
+    };
+
+    /// <summary>
     ///     Gets replacement approach points (map coordinates) for FATEs whose
     ///     centre lies under an overlapping piece of terrain, where any floor
     ///     query is ambiguous between the two layers. The replacement point is

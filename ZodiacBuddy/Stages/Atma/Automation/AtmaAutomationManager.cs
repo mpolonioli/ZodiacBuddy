@@ -30,6 +30,11 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
     private const float RangedAttackBonus = 8f;
     private const float MountDistance = 30f;
 
+    // How far inside attack range the approach path aims to stop. The path ends
+    // within vnavmesh's tolerance of that point, so aiming at the very edge of
+    // the range regularly leaves the character standing just outside it.
+    private const float ApproachMargin = 1.5f;
+
     // While mopping up after a fight, only enemies within this range of the
     // player count as attackers worth chasing, so we don't run off across the
     // zone toward mobs that are merely in combat with someone else.
@@ -83,6 +88,8 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
     private Vector3 roamDestination;
     private DateTime roamStartedAt;
     private bool roaming;
+    private DateTime approachIssuedAt;
+    private bool closingIn;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="AtmaAutomationManager" /> class.
@@ -1013,8 +1020,8 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
 
         if (!this.stateEntered)
         {
-            this.navmesh.PathfindAndMoveCloseTo(mob.Position, Math.Max(range - 0.5f, 1f));
-            this.lastMobPosition = mob.Position;
+            this.closingIn = false;
+            this.IssueApproach(mob, range);
             this.repathAttempts = 0;
             this.ResetStuckDetection(player.Position);
             this.stateEntered = true;
@@ -1026,15 +1033,35 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
             && Vector3.Distance(mob.Position, this.lastMobPosition) > 5f)
         {
             this.navmesh.Stop();
-            this.navmesh.PathfindAndMoveCloseTo(mob.Position, Math.Max(range - 0.5f, 1f));
-            this.lastMobPosition = mob.Position;
+            this.IssueApproach(mob, range);
+        }
+
+        // The approach path can end just short of attack range: it stops within
+        // vnavmesh's own tolerance of a point that is already a stopping
+        // distance short of the mob, and a height difference counts against the
+        // range check on top of that. Instead of standing there until the stuck
+        // timer gives up on a perfectly good enemy, close the last few yalms by
+        // pathing onto the mob itself.
+        if (!this.closingIn
+            && DateTime.UtcNow - this.approachIssuedAt > TimeSpan.FromSeconds(1.5)
+            && !this.navmesh.IsPathRunning
+            && !this.navmesh.IsPathfindInProgress)
+        {
+            Service.PluginLog.Debug(
+                $"[Automation] Approach ended {Vector3.Distance(player.Position, mob.Position):F1}y from " +
+                $"{this.currentEnemy.Name} (attack range {range:F1}y); moving onto it.");
+            this.closingIn = true;
+            this.IssueApproach(mob, range);
+            this.repathAttempts = 0;
+            this.ResetStuckDetection(player.Position);
+            return;
         }
 
         // This mob may be somewhere unreachable; give up on it and rescan.
         if (this.CheckStuck(player.Position, () =>
             {
                 this.navmesh.Stop();
-                this.navmesh.PathfindAndMoveCloseTo(mob.Position, Math.Max(range - 0.5f, 1f));
+                this.IssueApproach(mob, range);
             })
             || this.StateAge > TimeSpan.FromSeconds(60))
         {
@@ -1327,6 +1354,30 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
         }
 
         return mob;
+    }
+
+    /// <summary>
+    ///     Path toward a mob we intend to fight. The normal approach stops a
+    ///     little inside attack range; once <see cref="closingIn" /> is set (the
+    ///     approach ended out of range) it heads for the mob's own position
+    ///     instead, letting collision with the mob stop the character well
+    ///     within range.
+    /// </summary>
+    /// <param name="mob">The mob to approach.</param>
+    /// <param name="range">Attack range against that mob.</param>
+    private void IssueApproach(IBattleNpc mob, float range)
+    {
+        var accepted = this.closingIn
+            ? this.navmesh.PathfindAndMoveTo(mob.Position)
+            : this.navmesh.PathfindAndMoveCloseTo(mob.Position, Math.Max(range - ApproachMargin, 1f));
+
+        if (!accepted)
+        {
+            Service.PluginLog.Debug($"[Automation] vnavmesh refused the approach to {this.currentEnemy.Name}.");
+        }
+
+        this.approachIssuedAt = DateTime.UtcNow;
+        this.lastMobPosition = mob.Position;
     }
 
     /// <summary>

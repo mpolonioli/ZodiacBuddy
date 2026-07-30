@@ -80,6 +80,9 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
     private bool reapproachedOnce;
     private int lastProgress;
     private DateTime lastSpawnNoticeAt;
+    private Vector3 roamDestination;
+    private DateTime roamStartedAt;
+    private bool roaming;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="AtmaAutomationManager" /> class.
@@ -905,20 +908,29 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
     private void HandleScanning()
     {
         this.StatusDetail = $"Searching for {this.currentEnemy.Name}...";
+        var player = Service.ObjectTable.LocalPlayer!;
 
         if (!this.stateEntered)
         {
             this.lastSpawnNoticeAt = DateTime.UtcNow;
+            this.roaming = false;
             this.stateEntered = true;
         }
 
         if (Service.Condition[ConditionFlag.InCombat])
         {
             this.navmesh.Stop();
+            this.roaming = false;
             this.stateAfterAggro = AutomationState.Scanning;
             this.TransitionTo(AutomationState.HandlingAggro);
             return;
         }
+
+        // Supervise the roaming leg every tick: a roam point can sit behind an
+        // obstacle the path clips into, which leaves the path "running" forever
+        // and would pin the scan in place, since a new point is only picked once
+        // the current path ends.
+        this.CheckRoamProgress(player.Position);
 
         if (!EzThrottler.Throttle("ZodiacBuddy.AtmaAuto.Scan", 1000))
         {
@@ -929,21 +941,27 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
         if (mob is not null)
         {
             this.navmesh.Stop();
+            this.roaming = false;
             this.currentMobId = mob.GameObjectId;
             this.TransitionTo(AutomationState.MovingToEnemy);
             return;
         }
 
         // No spawns found; roam around the anchor point while waiting.
-        if (this.StateAge > TimeSpan.FromSeconds(10) && !this.navmesh.IsPathRunning && !this.navmesh.IsPathfindInProgress)
+        if (!this.roaming && this.StateAge > TimeSpan.FromSeconds(10)
+            && !this.navmesh.IsPathRunning && !this.navmesh.IsPathfindInProgress)
         {
             var angle = this.random.NextDouble() * Math.Tau;
             var range = (float)(this.random.NextDouble() * RoamRange);
             var seed = this.destination + new Vector3((float)Math.Cos(angle) * range, 5f, (float)Math.Sin(angle) * range);
             var floor = this.navmesh.PointOnFloor(seed, 10f);
-            if (floor is not null)
+            if (floor is not null && this.navmesh.PathfindAndMoveTo(floor.Value))
             {
-                this.navmesh.PathfindAndMoveTo(floor.Value);
+                this.roamDestination = floor.Value;
+                this.roamStartedAt = DateTime.UtcNow;
+                this.repathAttempts = 0;
+                this.ResetStuckDetection(player.Position);
+                this.roaming = true;
             }
         }
 
@@ -1309,6 +1327,45 @@ internal sealed class AtmaAutomationManager : IDisposable, IBookAutomation
         }
 
         return mob;
+    }
+
+    /// <summary>
+    ///     Watch the roaming leg of the scan, applying the same jump/unstuck
+    ///     recovery the travel states use. Unlike travel, an unreachable roam
+    ///     point is never worth failing over: it is only a place to wait for a
+    ///     spawn, so an abandoned leg simply frees the next tick to pick another
+    ///     point.
+    /// </summary>
+    /// <param name="position">Current player position.</param>
+    private void CheckRoamProgress(Vector3 position)
+    {
+        if (!this.roaming)
+        {
+            return;
+        }
+
+        // vnavmesh needs a moment to report the new path, so a leg only counts
+        // as finished once it has had time to start.
+        var age = DateTime.UtcNow - this.roamStartedAt;
+        if (age > TimeSpan.FromSeconds(1) && !this.navmesh.IsPathRunning && !this.navmesh.IsPathfindInProgress)
+        {
+            this.roaming = false;
+            return;
+        }
+
+        var target = this.roamDestination;
+        if (this.CheckStuck(position, () =>
+            {
+                this.navmesh.Stop();
+                this.navmesh.PathfindAndMoveTo(target);
+            })
+            || age > TimeSpan.FromSeconds(45))
+        {
+            this.navmesh.Stop();
+            this.unstuckRecovery = null;
+            this.roaming = false;
+            Service.PluginLog.Debug("[Automation] Roam point unreachable while scanning; picking another one.");
+        }
     }
 
     private void ResetStuckDetection(Vector3 position)

@@ -53,6 +53,9 @@ internal static class FateTweaks
 
         // Breaching South Tidegate requires Gauging South Tidegate.
         [571] = [570],
+
+        // The Enmity of My Enemy requires The Enemy of My Enemy.
+        [611] = [610],
     };
 
     /// <summary>

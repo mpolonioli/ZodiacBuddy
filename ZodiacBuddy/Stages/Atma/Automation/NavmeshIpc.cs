@@ -116,9 +116,12 @@ internal sealed class NavmeshIpc
     /// </summary>
     /// <param name="destination">Destination in world coordinates.</param>
     /// <param name="range">Distance from the destination at which to stop.</param>
+    /// <param name="fly">Whether to fly there. Required while airborne: the
+    ///     ground mesh has no start point in mid-air, so a ground path from up
+    ///     there is never found.</param>
     /// <returns>Whether the request was accepted.</returns>
-    public bool PathfindAndMoveCloseTo(Vector3 destination, float range)
-        => this.Invoke(() => this.pathfindAndMoveCloseTo?.Invoke(destination, false, range) ?? false, false);
+    public bool PathfindAndMoveCloseTo(Vector3 destination, float range, bool fly = false)
+        => this.Invoke(() => this.pathfindAndMoveCloseTo?.Invoke(destination, fly, range) ?? false, false);
 
     /// <summary>
     ///     Stop following the current path.

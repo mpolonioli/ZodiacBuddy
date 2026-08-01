@@ -867,8 +867,12 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
             }
 
             // Re-evaluate after mounting: the game reports flight as available
-            // only in situations that can change with the mount.
-            this.probingFly = wantFly && Service.Condition[ConditionFlag.Mounted];
+            // only in situations that can change with the mount. Being airborne
+            // already (the previous leg ended at a spot it could not land on)
+            // forces a flying route whatever the distance, since the ground mesh
+            // has no start point up here.
+            this.probingFly = (wantFly && Service.Condition[ConditionFlag.Mounted])
+                              || Service.Condition[ConditionFlag.InFlight];
             this.probeTask = this.navmesh.Pathfind(player.Position, this.travelGoal, this.probingFly);
             if (this.probeTask is null)
             {
@@ -971,9 +975,16 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
             return;
         }
 
-        // Arrival.
+        // Arrival. Crossing into the FATE area normally ends the leg early, but
+        // not in mid-flight with the path still running: stopping over the edge
+        // of the area leaves the character hovering high above the ground, far
+        // from the NPC or the enemies. Let the flying path run its course to the
+        // centre instead, where the landing step above brings us down. Once the
+        // path has ended, hovering is all there is (an unlandable spot) and
+        // counts as arrival - the follow-up states fly the last stretch.
         if (this.travelingToFate
-            && (IsInsideFateArea(travelFate!, player.Position)
+            && ((IsInsideFateArea(travelFate!, player.Position)
+                 && (!Service.Condition[ConditionFlag.InFlight] || !this.navmesh.IsPathRunning))
                 || (Vector3.Distance(player.Position, this.travelGoal) <= 10f && !this.navmesh.IsPathRunning)))
         {
             this.navmesh.Stop();
@@ -1113,19 +1124,37 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
             return;
         }
 
+        // Travel can hand this state a hovering character: a flying approach that
+        // crossed into the FATE area, or one that could not dismount where it
+        // ended. Nothing here works from up there - the NPC is out of interact
+        // range and cannot be talked to from a mount - so come down whenever no
+        // path is already on its way.
+        if (AtmaAutomationManager.LandIfHovering(this.navmesh, "ZodiacBuddy.FateAuto.Land"))
+        {
+            return;
+        }
+
+        // Until that descent succeeds the approach itself has to be flown, since
+        // the ground mesh has no start point in mid-air. A flying approach ends
+        // hovering right over the NPC, low enough for the landing above to
+        // finish the job on the next tick.
+        var flying = Service.Condition[ConditionFlag.InFlight];
+
         var npc = FateGameActions.GetMotivationNpc(this.activeFateId);
         if (npc is null)
         {
             // The NPC has not resolved yet; walk right up to the FATE centre where
-            // the start NPC stands. Arriving anywhere inside the (large) FATE radius
-            // is not enough - park too far out and the NPC never loads into interact
-            // range and we sit here until the timeout - so close the last stretch on
-            // foot until it appears and the branch below can approach it precisely.
+            // the start NPC stands (or to the approach point, for FATEs whose
+            // centre is not somewhere to stand). Arriving anywhere inside the
+            // (large) FATE radius is not enough - park too far out and the NPC
+            // never loads into interact range and we sit here until the timeout -
+            // so close the last stretch on foot until it appears and the branch
+            // below can approach it precisely.
             this.StatusDetail = $"Looking for the NPC that starts {fate.Name}...";
             if (!this.navmesh.IsPathRunning && !this.navmesh.IsPathfindInProgress
                 && EzThrottler.Throttle("ZodiacBuddy.FateAuto.NpcApproach", 2000))
             {
-                this.navmesh.PathfindAndMoveCloseTo(fate.Position, 4f);
+                this.navmesh.PathfindAndMoveCloseTo(this.GetFateApproachPoint(fate), 4f, flying);
             }
         }
         else if (!FateGameActions.IsInInteractRange(npc))
@@ -1133,7 +1162,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
             if (!this.navmesh.IsPathRunning && !this.navmesh.IsPathfindInProgress
                 && EzThrottler.Throttle("ZodiacBuddy.FateAuto.NpcApproach", 1000))
             {
-                this.navmesh.PathfindAndMoveCloseTo(npc.Position, 2f);
+                this.navmesh.PathfindAndMoveCloseTo(npc.Position, 2f, flying);
             }
         }
         else
@@ -1923,7 +1952,11 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         {
             this.retriedFateApproach = true;
             Log($"{reason} Retrying the approach.");
-            this.travelGoal = this.GetActiveFate()?.Position ?? this.travelGoal;
+
+            // Keep the FATE's approach point on the retry; its centre can be
+            // exactly the spot that could not be stood on in the first place.
+            var fate = this.GetActiveFate();
+            this.travelGoal = fate is not null ? this.GetFateApproachPoint(fate) : this.travelGoal;
             this.travelingToFate = true;
             this.flyDisabledForLeg = false;
             this.TransitionTo(FateAutomationState.ProbingRoute);

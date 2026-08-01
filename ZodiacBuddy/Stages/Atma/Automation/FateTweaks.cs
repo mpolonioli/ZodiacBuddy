@@ -41,16 +41,22 @@ internal static class FateTweaks
 
     /// <summary>
     ///     Gets replacement approach points (map coordinates) for FATEs whose
-    ///     centre lies under an overlapping piece of terrain, where any floor
-    ///     query is ambiguous between the two layers. The replacement point is
-    ///     inside the FATE area but clear of the overlap, so approaching it
-    ///     always resolves to the correct layer.
+    ///     centre is a bad place to head for: under an overlapping piece of
+    ///     terrain, where any floor query is ambiguous between the two layers,
+    ///     or off walkable ground, where a flying approach cannot land. The
+    ///     replacement point is inside the FATE area but clear of the problem,
+    ///     so approaching it always resolves to solid, landable ground.
     /// </summary>
     public static IReadOnlyDictionary<uint, Vector2> ApproachPoints { get; } = new Dictionary<uint, Vector2>
     {
         // The Big Bagoly Theory (Eastern Thanalan): only a small portion around
         // the centre is overlapped by the upper terrain layer.
         [543] = new(30.1f, 25.4f),
+
+        // The Enemy of My Enemy (East Shroud): the centre sits off walkable
+        // ground, so a flying approach hovers there without ever landing. This
+        // point is solid ground next to the NPC that starts the FATE.
+        [610] = new(28.0f, 21.0f),
     };
 
     /// <summary>

@@ -20,6 +20,7 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
     private readonly DungeonAutomationManager dungeonManager;
     private readonly FateAutomationManager fateManager;
     private readonly LeveAutomationManager leveManager;
+    private readonly BookExchangeManager bookExchangeManager;
 
     private bool navmeshInstalled;
     private bool combatAvailable;
@@ -32,13 +33,15 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
     /// <param name="dungeonManager">The dungeons automation manager driven by this window.</param>
     /// <param name="fateManager">The FATEs automation manager driven by this window.</param>
     /// <param name="leveManager">The levequests automation manager driven by this window.</param>
-    public AtmaAutomationWindow(AtmaAutomationManager manager, DungeonAutomationManager dungeonManager, FateAutomationManager fateManager, LeveAutomationManager leveManager)
+    /// <param name="bookExchangeManager">The book exchange automation, whose progress is shown by this window.</param>
+    public AtmaAutomationWindow(AtmaAutomationManager manager, DungeonAutomationManager dungeonManager, FateAutomationManager fateManager, LeveAutomationManager leveManager, BookExchangeManager bookExchangeManager)
         : base("Trial of the Braves Automation###ZodiacBuddyAtmaAutomation")
     {
         this.manager = manager;
         this.dungeonManager = dungeonManager;
         this.fateManager = fateManager;
         this.leveManager = leveManager;
+        this.bookExchangeManager = bookExchangeManager;
 
         this.RespectCloseHotkey = true;
         this.SizeCondition = ImGuiCond.FirstUseEver;
@@ -72,6 +75,7 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
         if (bookId == 0)
         {
             ImGui.TextColored(ImGuiColors.DalamudGrey, "No Trial of the Braves book is active. Equip your Zodiac weapon.");
+            this.DrawBookExchangeStatus();
             return;
         }
 
@@ -94,7 +98,24 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
                 "whole book from there.");
         }
 
+        var chainBooks = Service.Configuration.AtmaAutomation.ChainBooks;
+        if (ImGui.Checkbox("Chain books", ref chainBooks))
+        {
+            Service.Configuration.AtmaAutomation.ChainBooks = chainBooks;
+            Service.Configuration.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "Once every page of the book is complete, travel to G'jusana in Mor\n" +
+                "Dhona and take a new book from the first category that still has\n" +
+                "books left, spending 100 Allagan tomestones of poetics. With\n" +
+                "\"Chain steps\" on, the new book is then worked through as well.");
+        }
+
         this.DrawCombatPluginSelector();
+        this.DrawBookExchangeStatus();
 
         ImGui.Spacing();
 
@@ -140,12 +161,7 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
     private void DrawCombatPluginSelector()
     {
         var configuration = Service.Configuration.AtmaAutomation;
-        var anyRunning = this.manager.IsRunning
-                         || this.dungeonManager.IsRunning
-                         || this.fateManager.IsRunning
-                         || this.leveManager.IsRunning;
-
-        ImGui.BeginDisabled(anyRunning);
+        ImGui.BeginDisabled(this.AnyStepRunning());
         ImGui.SetNextItemWidth(140f);
         if (ImGui.BeginCombo("Combat plugin", CombatIpc.GetName(configuration.CombatPlugin)))
         {
@@ -171,6 +187,75 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
                 "the rotation. Cannot be changed while an automation is running.");
         }
     }
+
+    /// <summary>
+    ///     Show what the book exchange is doing, so the trip to G'jusana is not a
+    ///     black box, and let it be stopped like any other step.
+    /// </summary>
+    private void DrawBookExchangeStatus()
+    {
+        var exchange = this.bookExchangeManager;
+        ImGui.Separator();
+
+        if (exchange.IsRunning)
+        {
+            if (ImGui.Button("Stop##BookExchange"))
+            {
+                exchange.Stop("stopped by user.");
+            }
+
+            ImGui.SameLine();
+            ImGui.Text($"New book: {exchange.State}");
+
+            if (exchange.StatusDetail.Length > 0)
+            {
+                ImGui.Text(exchange.StatusDetail);
+            }
+
+            return;
+        }
+
+        // The trip to G'jusana can also be made on its own, without waiting for a
+        // step to finish and chain onto it.
+        var canStart = BookExchangeManager.CanStart(out var reason);
+        if (canStart && !AutomationChainManager.IsBookComplete())
+        {
+            canStart = false;
+            reason = "The current book still has work to do.";
+        }
+
+        if (canStart && this.AnyStepRunning())
+        {
+            canStart = false;
+            reason = "Another automation is running.";
+        }
+
+        ImGui.BeginDisabled(!canStart);
+        if (ImGui.Button("Take a new book"))
+        {
+            exchange.Start();
+        }
+
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+        {
+            ImGui.SetTooltip(canStart
+                ? "Travel to G'jusana in Mor Dhona and take a new book, without\n" +
+                  "waiting for \"Chain books\" to do it at the end of a run."
+                : reason);
+        }
+
+        if (exchange.State == BookExchangeState.Errored && exchange.LastError.Length > 0)
+        {
+            ImGui.TextColored(ImGuiColors.DalamudRed, exchange.LastError);
+        }
+    }
+
+    private bool AnyStepRunning()
+        => this.manager.IsRunning
+           || this.dungeonManager.IsRunning
+           || this.fateManager.IsRunning
+           || this.leveManager.IsRunning;
 
     private void DrawEnemiesTab(BraveBook book)
     {

@@ -45,4 +45,11 @@ public class AtmaAutomationConfiguration
     ///     the whole book can run from a single Start press.
     /// </summary>
     public bool ChainAutomations { get; set; } = true;
+
+    /// <summary>
+    ///     Gets or sets a value indicating whether completing a book automatically
+    ///     takes a new one from G'jusana in Mor Dhona, paying the Allagan
+    ///     tomestones of poetics she asks for, and keeps going with it.
+    /// </summary>
+    public bool ChainBooks { get; set; } = false;
 }

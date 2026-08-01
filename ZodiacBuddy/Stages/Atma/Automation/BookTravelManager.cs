@@ -65,13 +65,21 @@ internal sealed class BookTravelManager : IDisposable
     /// </summary>
     public bool IsRunning => this.state is not TravelState.Idle;
 
+    /// <summary>
+    ///     Gets a value indicating whether the last travel reached its target, as
+    ///     opposed to being cancelled or given up on.
+    /// </summary>
+    public bool Arrived { get; private set; }
+
     private TimeSpan StateAge => DateTime.UtcNow - this.stateEnteredAt;
 
     /// <summary>
     ///     Start traveling to a book target after its teleport was issued.
     /// </summary>
     /// <param name="bookTarget">The clicked book target.</param>
-    public void Start(BraveTarget bookTarget)
+    /// <param name="waitForTeleport">Whether to wait for a teleport to land first.
+    ///     Pass false when the character already stands in the target's zone.</param>
+    public void Start(BraveTarget bookTarget, bool waitForTeleport = true)
     {
         if (!NavmeshIpc.IsInstalled)
         {
@@ -87,6 +95,15 @@ internal sealed class BookTravelManager : IDisposable
         this.target = bookTarget;
         this.sawZoning = false;
         this.startTerritory = Service.ClientState.TerritoryType;
+        this.Arrived = false;
+
+        if (!waitForTeleport)
+        {
+            this.TransitionTo(TravelState.WaitingForNavmesh);
+            Log($"Traveling to {bookTarget.Name} in {bookTarget.ZoneName}.");
+            return;
+        }
+
         this.TransitionTo(TravelState.WaitingForArrival);
         Log($"Waiting for the teleport to {bookTarget.ZoneName}, then traveling to {bookTarget.Name}.");
     }
@@ -284,6 +301,7 @@ internal sealed class BookTravelManager : IDisposable
         if (Vector3.Distance(player.Position, this.destination) <= 5f && !this.navmesh.IsPathRunning)
         {
             this.state = TravelState.Idle;
+            this.Arrived = true;
             Log($"Arrived at {this.target.Name}.");
             return;
         }
@@ -360,6 +378,19 @@ internal sealed class BookTravelManager : IDisposable
 
         if (DateTime.UtcNow - this.lastMovedAt > TimeSpan.FromSeconds(5))
         {
+            // A flying route that keeps jamming is demoted to the ground before
+            // giving up: the goal can sit under a ceiling, or the leg can have no
+            // flyable route at all.
+            if (this.repathAttempts >= 3 && this.fly)
+            {
+                this.fly = false;
+                this.repathAttempts = 0;
+                Log($"Flying is not getting to {this.target.Name}; continuing on the ground.");
+                this.ResetStuckDetection(position);
+                this.Repath();
+                return false;
+            }
+
             if (++this.repathAttempts > 3)
             {
                 return true;

@@ -16,7 +16,14 @@ namespace ZodiacBuddy.Stages.Atma.Automation;
 internal sealed class AutomationChainManager : IDisposable
 {
     private readonly IReadOnlyList<Step> steps;
+    private readonly BookExchangeManager bookExchange;
     private readonly bool[] wasRunning;
+
+    // Completion is watched on the flag itself rather than on a running -> stopped
+    // edge: a step whose page is already complete goes from Start to Completed
+    // within one framework tick, and the step managers update before this one, so
+    // that edge is never observed.
+    private readonly bool[] wasCompleted;
 
     // Steps already attempted in the current chain run. Each page is chained onto
     // at most once per run, so a step that finishes with its page still incomplete
@@ -25,6 +32,8 @@ internal sealed class AutomationChainManager : IDisposable
     // once every automation is idle again, ending the run.
     private readonly bool[] attempted;
 
+    private bool wasExchangeCompleted;
+
     /// <summary>
     ///     Initializes a new instance of the <see cref="AutomationChainManager" /> class.
     /// </summary>
@@ -32,12 +41,16 @@ internal sealed class AutomationChainManager : IDisposable
     /// <param name="dungeons">The dungeons automation.</param>
     /// <param name="fates">The FATEs automation.</param>
     /// <param name="leves">The levequests automation.</param>
+    /// <param name="bookExchange">The book exchange automation.</param>
     public AutomationChainManager(
         AtmaAutomationManager enemies,
         DungeonAutomationManager dungeons,
         FateAutomationManager fates,
-        LeveAutomationManager leves)
+        LeveAutomationManager leves,
+        BookExchangeManager bookExchange)
     {
+        this.bookExchange = bookExchange;
+
         // The method groups resolve to each manager's single-argument CanStart
         // overload, matching the CanStartCheck delegate signature.
         this.steps =
@@ -48,6 +61,7 @@ internal sealed class AutomationChainManager : IDisposable
             new Step("Levequests", leves, IsLevesPageComplete, LeveAutomationManager.CanStart),
         ];
         this.wasRunning = new bool[this.steps.Count];
+        this.wasCompleted = new bool[this.steps.Count];
         this.attempted = new bool[this.steps.Count];
         Service.Framework.Update += this.OnUpdate;
     }
@@ -59,6 +73,17 @@ internal sealed class AutomationChainManager : IDisposable
     {
         Service.Framework.Update -= this.OnUpdate;
     }
+
+    /// <summary>
+    ///     Check whether every page of the active book is complete, so it can be
+    ///     traded for a new one. A character carrying no book counts as complete.
+    /// </summary>
+    /// <returns>Whether the book has nothing left to do.</returns>
+    public static bool IsBookComplete()
+        => IsEnemiesPageComplete()
+           && IsDungeonsPageComplete()
+           && IsFatesPageComplete()
+           && IsLevesPageComplete();
 
     private static bool IsEnemiesPageComplete()
     {
@@ -126,28 +151,37 @@ internal sealed class AutomationChainManager : IDisposable
         try
         {
             var chaining = Service.Configuration.AtmaAutomation.ChainAutomations;
-            var anyRunning = false;
+            var anyRunning = this.CheckBookExchange(chaining);
 
             for (var i = 0; i < this.steps.Count; i++)
             {
-                var running = this.steps[i].Automation.IsRunning;
+                var automation = this.steps[i].Automation;
+                var running = automation.IsRunning;
+                var completed = automation.IsCompleted;
                 anyRunning |= running;
 
                 var startedNow = !this.wasRunning[i] && running;
-                var completedNow = this.wasRunning[i] && !running && this.steps[i].Automation.IsCompleted;
+                var completedNow = completed && !this.wasCompleted[i];
                 this.wasRunning[i] = running;
+                this.wasCompleted[i] = completed;
 
                 // Whether started by the user or by the chain, a step counts as
-                // attempted for this run so the wrap-around never revisits it.
-                if (startedNow)
+                // attempted for this run so the wrap-around never revisits it. A
+                // step that started and completed between two ticks is only ever
+                // seen completed, so that counts as an attempt too.
+                if (startedNow || completedNow)
                 {
                     this.attempted[i] = true;
                 }
 
-                if (completedNow && chaining)
+                if (!completedNow)
                 {
-                    anyRunning |= this.AdvanceFrom(i);
+                    continue;
                 }
+
+                // Nothing left to chain onto in this book: when every page is
+                // done, the run can continue into a new book instead of ending.
+                anyRunning |= (chaining && this.AdvanceFrom(i)) || this.TryStartBookExchange();
             }
 
             // The run is over once nothing is left running; forget the attempts so
@@ -164,6 +198,62 @@ internal sealed class AutomationChainManager : IDisposable
     }
 
     /// <summary>
+    ///     Watch the book exchange: once it has taken a new book, the chain starts
+    ///     over on the first step of that book.
+    /// </summary>
+    /// <param name="chaining">Whether the steps are chained together.</param>
+    /// <returns>Whether the exchange or the step it started is running.</returns>
+    private bool CheckBookExchange(bool chaining)
+    {
+        var completed = this.bookExchange.IsCompleted;
+        var completedNow = completed && !this.wasExchangeCompleted;
+        this.wasExchangeCompleted = completed;
+
+        if (!completedNow || !chaining)
+        {
+            return this.bookExchange.IsRunning;
+        }
+
+        // The new book has everything left to do, so none of its steps counts as
+        // attempted yet.
+        Array.Clear(this.attempted);
+        Log("A new book was taken; starting over on it.");
+        return this.StartNextStep(0, this.steps.Count);
+    }
+
+    /// <summary>
+    ///     Travel to G'jusana for a new book, once every page of the current one is
+    ///     complete and nothing is left to chain onto.
+    /// </summary>
+    /// <returns>Whether the book exchange was started.</returns>
+    private bool TryStartBookExchange()
+    {
+        if (!Service.Configuration.AtmaAutomation.ChainBooks
+            || this.bookExchange.IsRunning
+            || this.steps.Any(s => s.Automation.IsRunning))
+        {
+            return false;
+        }
+
+        // A step can finish with work left in the book (levequests still to be
+        // completed in the field); that book is not ready to be replaced.
+        if (!IsBookComplete())
+        {
+            return false;
+        }
+
+        if (!BookExchangeManager.CanStart(out var reason))
+        {
+            Log($"Not taking a new book: {reason}");
+            return false;
+        }
+
+        Log("The book is complete; taking a new one.");
+        this.bookExchange.Start();
+        return this.bookExchange.IsRunning;
+    }
+
+    /// <summary>
     ///     Start the next book step after a completed one, wrapping around the order
     ///     and skipping steps already attempted this run, already complete, or unable
     ///     to start.
@@ -172,6 +262,20 @@ internal sealed class AutomationChainManager : IDisposable
     /// <returns>Whether a following step was started.</returns>
     private bool AdvanceFrom(int completedIndex)
     {
+        Log($"{this.steps[completedIndex].Name} finished.");
+        return this.StartNextStep(completedIndex + 1, this.steps.Count - 1);
+    }
+
+    /// <summary>
+    ///     Start the first step of the given range that still has work to do and
+    ///     can run, walking the steps in circular order so starting mid-book still
+    ///     comes back around to the earlier steps.
+    /// </summary>
+    /// <param name="firstIndex">Step to consider first.</param>
+    /// <param name="count">How many steps to consider from there.</param>
+    /// <returns>Whether a step was started.</returns>
+    private bool StartNextStep(int firstIndex, int count)
+    {
         // Every automation drives the character; never chain onto one while any is
         // somehow still running.
         if (this.steps.Any(s => s.Automation.IsRunning))
@@ -179,11 +283,9 @@ internal sealed class AutomationChainManager : IDisposable
             return false;
         }
 
-        // Walk the remaining steps in circular order, so starting mid-book still
-        // comes back around to the earlier steps.
-        for (var offset = 1; offset < this.steps.Count; offset++)
+        for (var offset = 0; offset < count; offset++)
         {
-            var j = (completedIndex + offset) % this.steps.Count;
+            var j = (firstIndex + offset) % this.steps.Count;
             var step = this.steps[j];
             if (this.attempted[j] || step.IsPageComplete())
             {
@@ -199,7 +301,7 @@ internal sealed class AutomationChainManager : IDisposable
                 continue;
             }
 
-            Log($"{this.steps[completedIndex].Name} finished; starting {step.Name}.");
+            Log($"Starting {step.Name}.");
             this.attempted[j] = true;
             step.Automation.Start();
 

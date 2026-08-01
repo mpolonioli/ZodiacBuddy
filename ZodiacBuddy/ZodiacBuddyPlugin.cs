@@ -27,6 +27,7 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
     private readonly DungeonAutomationManager dungeonAutomationManager;
     private readonly FateAutomationManager fateAutomationManager;
     private readonly LeveAutomationManager leveAutomationManager;
+    private readonly BookExchangeManager bookExchangeManager;
     private readonly AutomationChainManager automationChainManager;
     private readonly AtmaAutomationWindow atmaAutomationWindow;
     private readonly BookTravelManager bookTravelManager;
@@ -56,11 +57,12 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
         dungeonAutomationManager = new DungeonAutomationManager(bookTravelManager);
         fateAutomationManager = new FateAutomationManager(advancedUnstuck, bookTravelManager);
         leveAutomationManager = new LeveAutomationManager(advancedUnstuck, bookTravelManager);
-        automationChainManager = new AutomationChainManager(atmaAutomationManager, dungeonAutomationManager, fateAutomationManager, leveAutomationManager);
+        bookExchangeManager = new BookExchangeManager(bookTravelManager);
+        automationChainManager = new AutomationChainManager(atmaAutomationManager, dungeonAutomationManager, fateAutomationManager, leveAutomationManager, bookExchangeManager);
 
         windowSystem = new WindowSystem("ZodiacBuddy");
         windowSystem.AddWindow(configWindow = new ConfigWindow());
-        windowSystem.AddWindow(atmaAutomationWindow = new AtmaAutomationWindow(atmaAutomationManager, dungeonAutomationManager, fateAutomationManager, leveAutomationManager));
+        windowSystem.AddWindow(atmaAutomationWindow = new AtmaAutomationWindow(atmaAutomationManager, dungeonAutomationManager, fateAutomationManager, leveAutomationManager, bookExchangeManager));
 
         Service.Interface.UiBuilder.OpenConfigUi += OnOpenConfigUi;
         Service.Interface.UiBuilder.Draw += windowSystem.Draw;
@@ -89,6 +91,7 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
         animusBuddy.Dispose();
         atmaAutomationWindow.Dispose();
         automationChainManager.Dispose();
+        bookExchangeManager.Dispose();
         leveAutomationManager.Dispose();
         fateAutomationManager.Dispose();
         dungeonAutomationManager.Dispose();

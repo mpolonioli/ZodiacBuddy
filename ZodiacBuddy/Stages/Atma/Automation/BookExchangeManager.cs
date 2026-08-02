@@ -21,6 +21,14 @@ namespace ZodiacBuddy.Stages.Atma.Automation;
 internal sealed class BookExchangeManager : IDisposable
 {
     /// <summary>
+    ///     Shown once the exchange has nothing left to hand over, repeating what
+    ///     the game itself says at that point.
+    /// </summary>
+    internal const string NoBooksLeftMessage =
+        "Every Trial of the Braves book for this relic is completed. " +
+        "Present the relic weapon atma to Jalzahn in Hyrstmill.";
+
+    /// <summary>
     ///     Currency a book is exchanged for: 100 Allagan tomestones of poetics.
     /// </summary>
     private const uint PoeticsItemId = 28;
@@ -47,6 +55,15 @@ internal sealed class BookExchangeManager : IDisposable
 
     private uint bookIdBeforeExchange;
     private string takenCategory = string.Empty;
+
+    // The exchange ran dry during this run, so it ends without a book once the
+    // dialogue is dismissed.
+    private bool outOfBooks;
+
+    // Weapons held when the exchange ran dry, remembered so the trip is not made
+    // again for them. The books are handed out for the equipped relic weapon
+    // atma, so equipping another one makes its own books available again.
+    private (uint MainHand, uint OffHand)? exhaustedWeapons;
 
     private List<uint> aetheryteCandidates = [];
     private Vector3 destination;
@@ -84,19 +101,27 @@ internal sealed class BookExchangeManager : IDisposable
     public string StatusDetail { get; private set; } = string.Empty;
 
     /// <summary>
-    ///     Gets the last error message, if any.
+    ///     Gets the last error message, or the reason the run ended without a book.
     /// </summary>
     public string LastError { get; private set; } = string.Empty;
 
     /// <summary>
     ///     Gets a value indicating whether the automation is currently running.
     /// </summary>
-    public bool IsRunning => this.State is not (BookExchangeState.Idle or BookExchangeState.Completed or BookExchangeState.Errored);
+    public bool IsRunning => this.State is not (BookExchangeState.Idle or BookExchangeState.Completed
+        or BookExchangeState.NoBooksLeft or BookExchangeState.Errored);
 
     /// <summary>
     ///     Gets a value indicating whether the automation took a new book.
     /// </summary>
     public bool IsCompleted => this.State == BookExchangeState.Completed;
+
+    /// <summary>
+    ///     Gets a value indicating whether G'jusana has no book left to hand over
+    ///     for the equipped relic, so travelling to her would only end in the same
+    ///     "you have already completed all the trials" line.
+    /// </summary>
+    public bool EveryBookCompleted => this.exhaustedWeapons is { } weapons && weapons == GetEquippedWeapons();
 
     private static MapLinkPayload NpcMapLink => new(NpcTerritoryId, 25, 22.9f, 7.3f);
 
@@ -145,6 +170,14 @@ internal sealed class BookExchangeManager : IDisposable
             return;
         }
 
+        if (this.EveryBookCompleted)
+        {
+            this.State = BookExchangeState.NoBooksLeft;
+            this.LastError = NoBooksLeftMessage;
+            Service.PluginLog.Warning($"[BookExchange] Cannot start: {NoBooksLeftMessage}");
+            return;
+        }
+
         if (!CanStart(out var reason))
         {
             this.LastError = reason;
@@ -155,6 +188,7 @@ internal sealed class BookExchangeManager : IDisposable
         this.bookIdBeforeExchange = AtmaAutomationManager.GetActiveBookId();
         this.takenCategory = string.Empty;
         this.travelAttempts = 0;
+        this.outOfBooks = false;
         this.LastError = string.Empty;
         Log($"Taking a new Trial of the Braves book from {NpcName}.");
 
@@ -214,6 +248,25 @@ internal sealed class BookExchangeManager : IDisposable
         return inventory == null
             ? 0
             : inventory->GetItemCountInContainer(PoeticsItemId, InventoryType.Currency);
+    }
+
+    /// <summary>
+    ///     Get the weapons the character is holding. Books are handed out for the
+    ///     equipped relic weapon atma - a shield for paladins keeping their own
+    ///     set - so the pair identifies which books the exchange offers.
+    /// </summary>
+    /// <returns>The main hand and off hand item ids, 0 where there is none.</returns>
+    private static (uint MainHand, uint OffHand) GetEquippedWeapons()
+    {
+        try
+        {
+            return (Util.GetEquippedItem(0).ItemId, Util.GetEquippedItem(1).ItemId);
+        }
+        catch (Exception ex)
+        {
+            Service.PluginLog.Warning(ex, "Could not read the equipped weapons.");
+            return (0, 0);
+        }
     }
 
     /// <summary>
@@ -497,6 +550,14 @@ internal sealed class BookExchangeManager : IDisposable
 
         if (this.StateAge > TimeSpan.FromSeconds(90))
         {
+            // Whatever she was saying went unrecognized; log it, as it is the only
+            // thing that explains a whole exchange spent going nowhere.
+            var talk = BookExchangeGameActions.GetTalkText();
+            if (talk.Length > 0)
+            {
+                Service.PluginLog.Debug($"[BookExchange] Last dialogue: {talk.ReplaceLineEndings(" ")}");
+            }
+
             var poetics = GetPoeticsCount();
             this.Fail(poetics < BookCost
                 ? $"Not enough Allagan tomestones of poetics for a new book: {poetics}/{BookCost}."
@@ -513,6 +574,22 @@ internal sealed class BookExchangeManager : IDisposable
     /// </summary>
     private void DriveExchangeDialog()
     {
+        // What G'jusana is saying is read before the line is clicked away: with
+        // every trial of the relic completed she answers the exchange entry with
+        // a line instead of the category list, and without recognizing it we
+        // would keep reopening her menu until the timeout.
+        if (BookExchangeGameActions.IsOutOfBooksTalk())
+        {
+            this.RanOutOfBooks();
+            return;
+        }
+
+        if (BookExchangeGameActions.IsBookNotCompleteTalk())
+        {
+            this.Fail("G'jusana hands over a new book only once every objective of the current one is complete.");
+            return;
+        }
+
         FateGameActions.ProgressTalk();
 
         // The category list is answered first: its entries are the only ones the
@@ -523,7 +600,7 @@ internal sealed class BookExchangeManager : IDisposable
         {
             if (anyCategoryListed)
             {
-                this.Fail("Every Trial of the Braves book is already completed.");
+                this.RanOutOfBooks();
                 return;
             }
 
@@ -579,17 +656,17 @@ internal sealed class BookExchangeManager : IDisposable
             this.dialogueClearSince ??= DateTime.UtcNow;
             if (DateTime.UtcNow - this.dialogueClearSince > DialogueSettleTime)
             {
-                this.Complete();
+                this.Finish();
                 return;
             }
         }
 
         // Some dialogue keeps reopening (a quest offer, a window we do not know);
-        // the book is ours either way, so do not fail over it.
+        // the exchange is over either way, so do not fail over it.
         if (this.StateAge > TimeSpan.FromSeconds(30))
         {
             Log("Some dialogue is still open after the exchange; continuing anyway.");
-            this.Complete();
+            this.Finish();
         }
     }
 
@@ -610,11 +687,38 @@ internal sealed class BookExchangeManager : IDisposable
         this.dialogueClearSince = null;
     }
 
-    private void Complete()
+    /// <summary>
+    ///     Note that the exchange has nothing left to hand over for this relic and
+    ///     let the dialogue be dismissed, so the character is not left standing in
+    ///     G'jusana's event. The trip is not made again until another relic atma is
+    ///     equipped.
+    /// </summary>
+    private void RanOutOfBooks()
     {
         this.navmesh.Stop();
-        this.State = BookExchangeState.Completed;
+        this.outOfBooks = true;
+        this.exhaustedWeapons = GetEquippedWeapons();
+        this.LastError = NoBooksLeftMessage;
+        Log(NoBooksLeftMessage);
+        this.TransitionTo(BookExchangeState.DismissingDialogue);
+    }
+
+    /// <summary>
+    ///     End the run in the state the exchange left it in: with a new book, or
+    ///     with none left to take.
+    /// </summary>
+    private void Finish()
+    {
+        this.navmesh.Stop();
         this.StatusDetail = string.Empty;
+
+        if (this.outOfBooks)
+        {
+            this.State = BookExchangeState.NoBooksLeft;
+            return;
+        }
+
+        this.State = BookExchangeState.Completed;
         Log("A new Trial of the Braves book is active.");
     }
 

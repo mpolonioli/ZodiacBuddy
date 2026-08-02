@@ -218,6 +218,12 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
         // The trip to G'jusana can also be made on its own, without waiting for a
         // step to finish and chain onto it.
         var canStart = BookExchangeManager.CanStart(out var reason);
+        if (canStart && exchange.EveryBookCompleted)
+        {
+            canStart = false;
+            reason = BookExchangeManager.NoBooksLeftMessage;
+        }
+
         if (canStart && !AutomationChainManager.IsBookComplete())
         {
             canStart = false;
@@ -248,6 +254,10 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
         if (exchange.State == BookExchangeState.Errored && exchange.LastError.Length > 0)
         {
             ImGui.TextColored(ImGuiColors.DalamudRed, exchange.LastError);
+        }
+        else if (exchange.EveryBookCompleted)
+        {
+            ImGui.TextWrapped(BookExchangeManager.NoBooksLeftMessage);
         }
     }
 

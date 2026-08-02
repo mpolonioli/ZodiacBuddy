@@ -235,6 +235,14 @@ internal sealed class AutomationChainManager : IDisposable
             return false;
         }
 
+        // Nothing is left to take: every book of the equipped relic is completed,
+        // and the trip would only end in G'jusana saying so again.
+        if (this.bookExchange.EveryBookCompleted)
+        {
+            Log("Not taking a new book: every trial of this relic is completed.");
+            return false;
+        }
+
         // A step can finish with work left in the book (levequests still to be
         // completed in the field); that book is not ready to be replaced.
         if (!IsBookComplete())

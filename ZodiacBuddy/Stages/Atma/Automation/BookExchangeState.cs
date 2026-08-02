@@ -36,6 +36,12 @@ internal enum BookExchangeState
     Completed,
 
     /// <summary>
+    ///     G'jusana has no book left to hand over: every trial of the equipped
+    ///     relic is completed.
+    /// </summary>
+    NoBooksLeft,
+
+    /// <summary>
     ///     Automation stopped because of an error.
     /// </summary>
     Errored,

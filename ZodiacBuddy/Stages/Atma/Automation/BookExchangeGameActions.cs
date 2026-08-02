@@ -3,9 +3,12 @@ using Dalamud.Game.ClientState.Objects.Types;
 using ECommons.UIHelpers.AddonMasterImplementations;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
+using Lumina.Excel;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace ZodiacBuddy.Stages.Atma.Automation;
@@ -17,10 +20,58 @@ namespace ZodiacBuddy.Stages.Atma.Automation;
 internal static unsafe partial class BookExchangeGameActions
 {
     /// <summary>
+    ///     Sheet holding every line G'jusana speaks in the Trials of the Braves
+    ///     exchange, so the ones that end it without a book are recognized in
+    ///     whatever language the client runs in.
+    /// </summary>
+    private const string ExchangeTextSheet = "custom/001/CmnDefRelicWeapon025GetNote_00167";
+
+    /// <summary>
+    ///     Column of <see cref="ExchangeTextSheet" /> holding the line itself; the
+    ///     first column is the internal key of the line.
+    /// </summary>
+    private const int ExchangeTextColumn = 1;
+
+    /// <summary>
+    ///     "...Hm? It appears we're completely out of books pertaining to that
+    ///     weapon. And small wonder, seeing as you're the one who cleaned us out!"
+    /// </summary>
+    private const uint OutOfBooksRow = 17;
+
+    /// <summary>
+    ///     "You have already completed all the trials for the equipped relic weapon
+    ///     atma. Make your way to Hyrstmill, and present it to Jalzahn."
+    /// </summary>
+    private const uint AllTrialsCompleteRow = 18;
+
+    /// <summary>
+    ///     "You must complete all of the objectives in a book before you may
+    ///     purchase another. [...]"
+    /// </summary>
+    private const uint BookNotCompleteRow = 21;
+
+    /// <summary>
     ///     Entries never selected in the exchange menus, so an unexpected dialog
     ///     cannot be answered with something unintended.
     /// </summary>
     private static readonly string[] IgnoredEntries = ["cancel", "nothing", "quit"];
+
+    /// <summary>
+    ///     Distinctive part of each recognized line, used when the line cannot be
+    ///     read from the sheet, e.g. after a patch moved it.
+    /// </summary>
+    private static readonly Dictionary<uint, string> LineFallbacks = new()
+    {
+        [OutOfBooksRow] = "completely out of books",
+        [AllTrialsCompleteRow] = "already completed all the trials",
+        [BookNotCompleteRow] = "complete all of the objectives",
+    };
+
+    /// <summary>
+    ///     Lines read from <see cref="ExchangeTextSheet" />, kept so the sheet is
+    ///     only read once per line rather than on every dialogue tick.
+    /// </summary>
+    private static readonly ConcurrentDictionary<uint, string> ExchangeLines = new();
 
     /// <summary>
     ///     Get an NPC by name, if it is loaded.
@@ -43,6 +94,52 @@ internal static unsafe partial class BookExchangeGameActions
            || GetReadyAddon("SelectIconString") != null
            || GetReadyAddon("SelectYesno") != null
            || GetReadyAddon("Talk") != null;
+
+    /// <summary>
+    ///     Check whether G'jusana is saying she has no book left to hand over for
+    ///     the equipped relic, which she does instead of opening the category list
+    ///     once every trial of the relic is completed.
+    /// </summary>
+    /// <returns>Whether the exchange ran dry.</returns>
+    public static bool IsOutOfBooksTalk()
+        => TalkMatchesLine(OutOfBooksRow) || TalkMatchesLine(AllTrialsCompleteRow);
+
+    /// <summary>
+    ///     Check whether G'jusana is refusing to hand a book over because the one
+    ///     already carried is not finished.
+    /// </summary>
+    /// <returns>Whether the current book still has objectives left.</returns>
+    public static bool IsBookNotCompleteTalk()
+        => TalkMatchesLine(BookNotCompleteRow);
+
+    /// <summary>
+    ///     Get everything the open dialogue box is showing, speaker name included.
+    ///     Every text node is read rather than one known node, so a changed layout
+    ///     costs nothing.
+    /// </summary>
+    /// <returns>The dialogue text, or an empty string when no dialogue is open.</returns>
+    public static string GetTalkText()
+    {
+        var addon = GetReadyAddon("Talk");
+        if (addon == null)
+        {
+            return string.Empty;
+        }
+
+        var text = new StringBuilder();
+        for (var i = 0; i < addon->UldManager.NodeListCount; i++)
+        {
+            var node = addon->UldManager.NodeList[i];
+            if (node == null || node->Type != NodeType.Text)
+            {
+                continue;
+            }
+
+            text.Append(node->GetAsAtkTextNode()->NodeText.ToString()).Append(' ');
+        }
+
+        return text.ToString();
+    }
 
     /// <summary>
     ///     Select the first entry of the open menu that lists a book category with
@@ -174,6 +271,88 @@ internal static unsafe partial class BookExchangeGameActions
     /// <returns>The compiled expression.</returns>
     [GeneratedRegex(@"(\d+)\s*(?:of|/)\s*(\d+)", RegexOptions.IgnoreCase)]
     private static partial Regex CompletionCountRegex();
+
+    /// <summary>
+    ///     Runs of whitespace, which the dialogue box wraps its lines with in
+    ///     places the sheet does not.
+    /// </summary>
+    /// <returns>The compiled expression.</returns>
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex WhitespaceRegex();
+
+    /// <summary>
+    ///     Check whether the open dialogue box is showing a known line of the
+    ///     exchange.
+    /// </summary>
+    /// <param name="rowId">Row of <see cref="ExchangeTextSheet" /> to look for.</param>
+    /// <returns>Whether the line is being spoken right now.</returns>
+    private static bool TalkMatchesLine(uint rowId)
+    {
+        var talk = Normalize(GetTalkText());
+        if (talk.Length == 0)
+        {
+            return false;
+        }
+
+        // The whole line as the game words it and, should the box have rewrapped
+        // it beyond recognition, the distinctive part of the English line it was
+        // written against.
+        return TalkContains(talk, GetExchangeLine(rowId))
+               || TalkContains(talk, LineFallbacks.GetValueOrDefault(rowId, string.Empty));
+    }
+
+    /// <summary>
+    ///     Check whether dialogue holds a line, ignoring how either of them is
+    ///     wrapped.
+    /// </summary>
+    /// <param name="talk">Normalized dialogue text.</param>
+    /// <param name="line">Line to look for.</param>
+    /// <returns>Whether the dialogue holds the line.</returns>
+    private static bool TalkContains(string talk, string line)
+    {
+        var needle = Normalize(line);
+        return needle.Length > 0 && talk.Contains(needle, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    ///     Get a line of the exchange from the game's own text, falling back to the
+    ///     distinctive part of the English line when the sheet cannot be read.
+    /// </summary>
+    /// <param name="rowId">Row of <see cref="ExchangeTextSheet" /> to read.</param>
+    /// <returns>The line, or an empty string when it is unknown.</returns>
+    private static string GetExchangeLine(uint rowId)
+        => ExchangeLines.GetOrAdd(rowId, static id =>
+        {
+            try
+            {
+                var sheet = Service.DataManager.GetExcelSheet<RawRow>(null, ExchangeTextSheet);
+                if (sheet.TryGetRow(id, out var row))
+                {
+                    var text = row.ReadStringColumn(ExchangeTextColumn).ExtractText();
+                    if (text.Length > 0)
+                    {
+                        return text;
+                    }
+                }
+
+                Service.PluginLog.Warning($"[BookExchange] Line {id} of {ExchangeTextSheet} is missing.");
+            }
+            catch (Exception ex)
+            {
+                Service.PluginLog.Warning(ex, $"Could not read line {id} of {ExchangeTextSheet}.");
+            }
+
+            return LineFallbacks.GetValueOrDefault(id, string.Empty);
+        });
+
+    /// <summary>
+    ///     Collapse the whitespace of a line, so a dialogue box that wrapped it
+    ///     still matches the sheet it came from.
+    /// </summary>
+    /// <param name="text">Text to normalize.</param>
+    /// <returns>The normalized text.</returns>
+    private static string Normalize(string text)
+        => WhitespaceRegex().Replace(text, " ").Trim();
 
     /// <summary>
     ///     Get the entries of the open SelectString or SelectIconString menu as a

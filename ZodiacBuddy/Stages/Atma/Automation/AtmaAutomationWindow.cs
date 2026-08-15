@@ -435,7 +435,43 @@ internal sealed class AtmaAutomationWindow : Window, IDisposable
         this.DrawFatesTable(book);
 
         ImGui.Separator();
+        DrawFillerWaitSetting();
+
+        ImGui.Separator();
         this.DrawFateControls();
+    }
+
+    /// <summary>
+    ///     How long to sit at a FATE's spawn point before going off to clear an
+    ///     unrelated FATE. The wait that follows a cleared prerequisite FATE is a
+    ///     fixed, longer one and is deliberately not configurable.
+    /// </summary>
+    private static void DrawFillerWaitSetting()
+    {
+        var configuration = Service.Configuration.AtmaAutomation;
+        var seconds = configuration.GetFillerFateWaitSeconds();
+
+        ImGui.SetNextItemWidth(120f);
+        if (ImGui.InputInt("Spawn point wait (seconds)", ref seconds, 15, 60))
+        {
+            configuration.FillerFateWaitSeconds = Math.Clamp(
+                seconds,
+                AtmaAutomationConfiguration.MinFillerFateWaitSeconds,
+                AtmaAutomationConfiguration.MaxFillerFateWaitSeconds);
+            Service.Configuration.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "How long to wait at the target FATE's spawn point before clearing an\n" +
+                "unrelated FATE to free a slot in the zone's FATE cap. The wait starts\n" +
+                "over every time the automation comes back to the spawn point.\n\n" +
+                "A FATE that only appears once a prerequisite FATE is cleared is given a\n" +
+                "fixed 3 minutes after that prerequisite finishes, regardless of this.\n\n" +
+                $"Between {AtmaAutomationConfiguration.MinFillerFateWaitSeconds} and " +
+                $"{AtmaAutomationConfiguration.MaxFillerFateWaitSeconds} seconds; takes effect immediately.");
+        }
     }
 
     private void DrawFatesTable(BraveBook book)

@@ -33,11 +33,11 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
     private const byte CollectFateRule = 2;
     private const int HandInBatchSize = 6;
 
-    // Zones cap how many FATEs can be active at once; when the cap is reached the
-    // target FATE sits in a hidden queue until other FATEs are cleared. After this
-    // long at the spawn point with nothing to do, clear one other FATE to free a
-    // slot, then come back and wait again.
-    private const int FillerWaitSeconds = 60;
+    // A FATE that only spawns once its prerequisite is cleared takes a while to
+    // come up afterwards, but it does come up - so once the prerequisite is done,
+    // hold the spawn point this long before going off to clear a filler FATE,
+    // regardless of the (usually shorter) configured wait.
+    private const int PrerequisiteWaitSeconds = 180;
 
     // Dying this often without completing a single FATE in between means the
     // fights are not winnable; stop instead of looping through death forever.
@@ -66,6 +66,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
     private uint activeFateId;
     private EngagementKind engagementKind;
     private int patrolIndex;
+    private bool clearedPrerequisite;
 
     private List<uint> aetheryteCandidates = [];
     private int aetheryteIndex;
@@ -203,6 +204,7 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         this.currentBook = BraveBook.GetValue(this.startedBookId);
         this.scoutedSlots.Clear();
         this.deathCount = 0;
+        this.clearedPrerequisite = false;
         this.LastError = string.Empty;
         Log($"Starting FATEs automation for {this.currentBook.Name}.");
         this.TransitionTo(FateAutomationState.SelectNextFate);
@@ -491,6 +493,10 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         this.CurrentSlot = -1;
         this.activeFateId = 0;
         this.engagementKind = EngagementKind.None;
+
+        // Any prerequisite cleared for the previous slot says nothing about the
+        // FATE we are about to pick.
+        this.clearedPrerequisite = false;
 
         // Initial reconnaissance sweep: FATEs can take up to ~30 minutes to spawn,
         // so before committing to that wait on any single one, visit each incomplete
@@ -1038,7 +1044,9 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
 
     private void HandleWaitingForFate()
     {
-        this.StatusDetail = $"Waiting for {this.currentFate.Name} to appear...";
+        this.StatusDetail = this.clearedPrerequisite
+            ? $"Waiting for {this.currentFate.Name} to appear after its prerequisite..."
+            : $"Waiting for {this.currentFate.Name} to appear...";
 
         if (!this.stateEntered)
         {
@@ -1070,6 +1078,14 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
                 return;
             }
 
+            // The sweep normally refuses to sink a wait into any single FATE, but
+            // a prerequisite just cleared here means this one is on its way; hold
+            // the spawn point for it rather than leaving for the next zone.
+            if (this.clearedPrerequisite && this.StateAge < TimeSpan.FromSeconds(PrerequisiteWaitSeconds))
+            {
+                return;
+            }
+
             this.ScoutNext();
             return;
         }
@@ -1082,9 +1098,16 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
         }
 
         // The zone caps how many FATEs can be active at once, and a capped-out
-        // target FATE waits in a hidden queue. After a minute of nothing to do,
-        // clear one other FATE to free a slot, then come back and wait again.
-        if (this.StateAge > TimeSpan.FromSeconds(FillerWaitSeconds)
+        // target FATE waits in a hidden queue. After the wait below with nothing
+        // to do, clear one other FATE to free a slot, then come back and wait
+        // again. Having just cleared the target's prerequisite is the one case
+        // where the FATE is known to be coming, so that wait is a fixed, longer
+        // one instead of the configured idle wait.
+        var waitSeconds = this.clearedPrerequisite
+            ? PrerequisiteWaitSeconds
+            : Service.Configuration.AtmaAutomation.GetFillerFateWaitSeconds();
+
+        if (this.StateAge > TimeSpan.FromSeconds(waitSeconds)
             && EzThrottler.Throttle("ZodiacBuddy.FateAuto.FillerScan", 2000)
             && this.TryFindFillerFate(out var filler))
         {
@@ -1605,10 +1628,15 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
             return;
         }
 
+        // Only a just-cleared prerequisite earns the long wait; anything else
+        // (a filler FATE, or the target itself ending without credit) goes back
+        // to the configured idle wait.
+        this.clearedPrerequisite = kind == EngagementKind.Chain;
+
         switch (kind)
         {
             case EngagementKind.Chain:
-                Log($"Chained FATE finished; watching for {this.currentFate.Name}.");
+                Log($"Chained FATE finished; watching for {this.currentFate.Name} for up to {PrerequisiteWaitSeconds / 60} minutes.");
                 break;
             case EngagementKind.Filler:
                 Log($"Filler FATE finished; returning to {this.currentFate.Name}'s spawn point.");
@@ -1877,6 +1905,14 @@ internal sealed class FateAutomationManager : IDisposable, IBookAutomation
     {
         Log(reason);
         this.navmesh.Stop();
+
+        // Giving up on the target itself means it had already spawned, so the
+        // prerequisite wait no longer describes what we are waiting for.
+        if (this.engagementKind == EngagementKind.Target)
+        {
+            this.clearedPrerequisite = false;
+        }
+
         this.activeFateId = 0;
         this.engagementKind = EngagementKind.None;
         this.ReturnToSpawn();

@@ -7,6 +7,8 @@ using System;
 using System.Linq;
 using System.Numerics;
 using ZodiacBuddy.BonusLight;
+using ZodiacBuddy.Stages.Animus;
+using ZodiacBuddy.Stages.Animus.Automation;
 
 namespace ZodiacBuddy;
 
@@ -20,11 +22,18 @@ internal class ConfigWindow : Window
     private static string[]? lightDutyLabels;
     private static uint[]? lightDutyIds;
 
+    private readonly AnimusAutomationControls alexandriteControls;
+
     /// <summary>
     ///     Initializes a new instance of the <see cref="ConfigWindow" /> class.
     /// </summary>
-    public ConfigWindow() : base("Zodiac Buddy Setup")
+    /// <param name="alexandriteAutomation">The Alexandrite automation the Animus
+    ///     section starts: its maps are farmed with no relic equipped, so the
+    ///     relic overlay is not the only place it can be reached from.</param>
+    public ConfigWindow(AlexandriteAutomationManager alexandriteAutomation) : base("Zodiac Buddy Setup")
     {
+        this.alexandriteControls = new AnimusAutomationControls(alexandriteAutomation, "AnimusSettings");
+
         RespectCloseHotkey = true;
 
         SizeCondition = ImGuiCond.FirstUseEver;
@@ -52,6 +61,11 @@ internal class ConfigWindow : Window
         if (ImGui.CollapsingHeader("Atma"))
         {
             DrawAtma();
+        }
+
+        if (ImGui.CollapsingHeader("Animus"))
+        {
+            DrawAnimus();
         }
 
         if (ImGui.CollapsingHeader("Novus"))
@@ -285,6 +299,28 @@ internal class ConfigWindow : Window
                              "(BossMod or Wrath Combo, selectable in the window).\n" +
                              "Note: teleports even when \"Disable Teleport\" is enabled.");
         }
+
+        ImGui.Spacing();
+    }
+
+    private void DrawAnimus()
+    {
+        var showRelicWindow = Service.Configuration.Animus.DisplayRelicInfo;
+        if (ImGui.Checkbox("Display Animus relic information when equipped", ref showRelicWindow))
+        {
+            Service.Configuration.Animus.DisplayRelicInfo = showRelicWindow;
+            Service.Configuration.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("The overlay showing how much Alexandrite is gathered, next to the relic.");
+        }
+
+        ImGui.Spacing();
+        ImGui.Text("Alexandrite gathered:");
+        this.alexandriteControls.DrawProgress(Vector2.Zero with {X = 320f});
+        this.alexandriteControls.DrawControls();
 
         ImGui.Spacing();
     }

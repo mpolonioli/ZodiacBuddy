@@ -3,6 +3,7 @@ using Dalamud.Game.Text;
 using Newtonsoft.Json;
 using ZodiacBuddy.BonusLight;
 using ZodiacBuddy.InformationWindow;
+using ZodiacBuddy.Stages.Animus;
 using ZodiacBuddy.Stages.Atma.Automation;
 using ZodiacBuddy.Stages.Brave;
 using ZodiacBuddy.Stages.Novus;
@@ -21,6 +22,8 @@ public class PluginConfiguration : IPluginConfiguration
     public bool BraveCopyTarget { get; set; } = true;
 
     public AtmaAutomationConfiguration AtmaAutomation { get; } = new();
+
+    public AnimusConfiguration Animus { get; } = new();
 
     public BonusLightConfiguration BonusLight { get; } = new();
 

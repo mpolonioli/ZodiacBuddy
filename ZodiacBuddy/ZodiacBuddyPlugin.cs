@@ -7,6 +7,7 @@ using ECommons;
 using System;
 using WrathCombo.API;
 using ZodiacBuddy.BonusLight;
+using ZodiacBuddy.Stages.Animus;
 using ZodiacBuddy.Stages.Atma;
 using ZodiacBuddy.Stages.Atma.Automation;
 using ZodiacBuddy.Stages.Brave;
@@ -22,6 +23,7 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
     private const string Command = "/pzodiac";
 
     private readonly AdvancedUnstuck advancedUnstuck;
+    private readonly AnimusManager animusManager;
     private readonly AtmaManager animusBuddy;
     private readonly AtmaAutomationManager atmaAutomationManager;
     private readonly DungeonAutomationManager dungeonAutomationManager;
@@ -60,8 +62,10 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
         bookExchangeManager = new BookExchangeManager(bookTravelManager);
         automationChainManager = new AutomationChainManager(atmaAutomationManager, dungeonAutomationManager, fateAutomationManager, leveAutomationManager, bookExchangeManager);
 
+        animusManager = new AnimusManager(bookTravelManager);
+
         windowSystem = new WindowSystem("ZodiacBuddy");
-        windowSystem.AddWindow(configWindow = new ConfigWindow());
+        windowSystem.AddWindow(configWindow = new ConfigWindow(animusManager.Automation));
         windowSystem.AddWindow(atmaAutomationWindow = new AtmaAutomationWindow(atmaAutomationManager, dungeonAutomationManager, fateAutomationManager, leveAutomationManager, bookExchangeManager));
 
         Service.Interface.UiBuilder.OpenConfigUi += OnOpenConfigUi;
@@ -98,6 +102,7 @@ public sealed class ZodiacBuddyPlugin : IDalamudPlugin
         atmaAutomationManager.Dispose();
         bookTravelManager.Dispose();
         advancedUnstuck.Dispose();
+        animusManager.Dispose();
         novusManager.Dispose();
         braveManager.Dispose();
         Service.BonusLightManager.Dispose();
